@@ -1,0 +1,45 @@
+# Artefacts ML — binaires, pas de valeur en lecture
+**/static/model/*.pikl
+**/static/model/*.pkl
+**/static/model/*.joblib
+
+# Datasets — volumineux, le rapport et le schéma suffisent pour le contexte
+**/static/data/*.csv
+
+# Caches Python
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Binaire Minikube (~90 Mo, exécutable Linux)
+minikube-linux-amd64
+
+# Assets frontend tiers — bundles minifiés non éditables
+nba-web/assets/bootstrap/
+nba-web/assets/img/
+
+# Sources Excalidraw — JSON brut illisible ; les .jpg exportés suffisent
+docs/*.excalidraw
+
+# Git
+.git/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Env locaux Python
+venv/
+.venv/
+env/
+*.egg-info/
+
+# Logs et runtime Airflow/K8s éventuels
+logs/
+*.log

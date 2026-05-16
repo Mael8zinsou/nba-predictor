@@ -1,0 +1,42 @@
+executor: LocalExecutor
+
+config:
+  core:
+    load_examples: "False"
+
+webserver:
+  defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    password: admin
+
+# Désactiver les dépendances internes
+postgresql:
+  enabled: false
+redis:
+  enabled: false
+
+# Connexion DB externe (le postgres officiel)
+data:
+  metadataConnection:
+    protocol: postgresql
+    host: airflow-postgres
+    port: 5432
+    db: airflow
+    user: airflow
+    pass: airflow
+    sslmode: disable
+
+dags:
+  persistence:
+    enabled: true
+    size: 1Gi
+
+logs:
+  persistence:
+    enabled: true
+    size: 2Gi
+
+service:
+  type: ClusterIP

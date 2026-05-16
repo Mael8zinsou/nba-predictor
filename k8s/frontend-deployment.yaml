@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nba-frontend
+  namespace: nba
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nba-frontend
+  template:
+    metadata:
+      labels:
+        app: nba-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: nba-frontend:1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5

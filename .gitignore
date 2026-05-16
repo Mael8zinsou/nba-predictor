@@ -1,0 +1,136 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+develop-eggs/
+.installed.cfg
+MANIFEST
+
+# Distribution / packaging
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ---------------------------------------------------------------------------
+# Environnements virtuels
+# ---------------------------------------------------------------------------
+venv/
+.venv/
+env/
+ENV/
+.env
+.envrc
+*.env.local
+
+# ---------------------------------------------------------------------------
+# Secrets — JAMAIS commiter
+# ---------------------------------------------------------------------------
+*.pem
+*.key
+*.p12
+*.pfx
+*.cert
+*.crt
+*.der
+*.p8
+.netrc
+credentials.json
+service-account.json
+secrets.yaml
+secrets.yml
+
+# Kubernetes secrets décodés (si jamais on les manipule en local)
+*-secret.decoded.yaml
+*-secret.decoded.yml
+
+# ---------------------------------------------------------------------------
+# IDE / éditeurs
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ---------------------------------------------------------------------------
+# OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---------------------------------------------------------------------------
+# Outils du projet
+# ---------------------------------------------------------------------------
+# Binaire Minikube versionné par mégarde (~90 Mo)
+minikube-linux-amd64
+minikube-darwin-amd64
+minikube-windows-amd64.exe
+
+# Sortie graphify (graphe régénérable) — sauf si on souhaite publier graph.html via Pages
+graphify-out/
+.graphify_*
+
+# Helm
+charts/*.tgz
+*.tgz
+
+# Logs
+*.log
+logs/
+
+# Kubeconfig local éventuel
+kubeconfig
+*.kubeconfig
+
+# ---------------------------------------------------------------------------
+# Artefacts ML (versionner via DVC plus tard, pas Git)
+# ---------------------------------------------------------------------------
+# NOTE: pour ce projet pédagogique, classifier.pikl et nba_logreg.csv sont
+# actuellement versionnés (sinon l'app ne démarre pas). Quand DVC sera en
+# place (voir roadmap README), décommenter :
+# nba-api/static/model/*.pikl
+# nba-api/static/data/*.csv
+
+# Fichiers ML générés dynamiquement (entraînement futur)
+mlruns/
+mlartifacts/
+*.joblib
+*.pkl
+*.h5
+*.onnx

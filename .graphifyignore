@@ -1,0 +1,28 @@
+# Artefacts ML binaires — aucune valeur pour un graphe
+**/static/model/*.pikl
+**/static/model/*.pkl
+**/static/model/*.joblib
+
+# Datasets tabulaires — pas de structure exploitable en graphe
+**/static/data/*.csv
+
+# Binaire Minikube Linux (~90 Mo) à la racine
+minikube-linux-amd64
+
+# Bundles tiers minifiés (Bootstrap) — pollueraient avec des centaines de nœuds sans intérêt
+nba-web/assets/bootstrap/
+
+# Images (logos, captures) — pas utiles pour le graphe textuel/code
+nba-web/assets/img/
+docs/*.jpg
+
+# Sources Excalidraw — JSON brut illisible (les .jpg exportés sont déjà ignorés ci-dessus)
+docs/*.excalidraw
+
+# Méta graphify de runs précédents (au cas où)
+.graphify_*
+
+# Notes :
+# - __pycache__, .git, venvs, graphify-out/ sont déjà ignorés nativement par graphify
+# - Le PDF docs/Rapport projet orchestra nba_predictor.pdf est volontairement conservé :
+#   c'est la source la plus dense en concepts d'architecture (god nodes attendus)

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+    <title>NBA Predictor</title>
+    <meta property="og:description" content="IA dans le Sport #SectionNBA.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="assets/img/Logo-NBA-1.jpg">
+    <meta property="og:title" content="NBA prediction">
+    <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Neucha|Cabin+Sketch&amp;display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Abril+Fatface">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Alfa+Slab+One">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Bevan">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Bungee">
+
+    <link rel="stylesheet" href="assets/css/styles.css">
+</head>
+
+<body style="border-radius: 5px;border-bottom-width: 2.4px;border-bottom-color: var(--bs-blue);">
+    <div class="col" style="text-align: center;border-top-color: var(--bs-blue);border-bottom-style: outset;border-bottom-color: var(--bs-blue);height: 182.4px;"><img src="assets/img/Logo-NBA-1.jpg" style="text-align: center;margin-top: 0px;margin-right: 0px;padding: 0px;padding-right: 0px;height: 178px;"></div>
+    <div class="container">
+        <div class="row">
+            <div class="col-md-6"><input class="form-control-plaintext" type="text" value="NBA" readonly="" style="text-align: center;border-top-color: #000000;font-size: 38px;letter-spacing: 14px;font-family: 'Alfa Slab One', serif;color: var(--bs-light);background: var(--bs-blue);"></div>
+            <div class="col-md-6" style="font-size: 38px;letter-spacing: 12px;text-align: center;background: #ff0000;color: var(--bs-light);"><input class="form-control-plaintext" type="text" value="CLASSIFICATION" readonly="" style="text-align: center;font-family: Bevan, serif;letter-spacing: 5px;color: var(--bs-white);"></div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="container">
+            <div class="row">
+                <div class="col"><input class="form-control-plaintext" type="text" value="      " readonly="" style="padding-bottom: -20px;padding-top: -12px;"></div>
+            </div>
+            <div class="row" style="margin-right: -12px;margin-left: 170px;margin-top: 30px;">
+                <div class="col-md-6" style="width: 435px;">
+                    <div class="card">
+                        <div class="card-body" style="margin-bottom: 1px;text-align: center;">
+                            <h4 class="card-title">Veuillez entrer le nom du joueur</h4>
+                            <h6 class="text-muted card-subtitle mb-2" style="height: 7px;"></h6><input type="text" style="border-bottom-width: 1px;width: 165.8px;" id="NameOfPlayer">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col" style="text-align: center;margin-top: 24px;margin-bottom: 19px;"><button class="btn btn-primary" type="button" id="btn_getdecisionbyname">Découvrir</button></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-body" style="margin: 0px;margin-top: 3px;margin-bottom: 0px;padding-top: 19px;text-align: center;">
+                            <h4 class="card-title">Ici, nous vous adressons le résultat.</h4>
+                            <h3 class="card-text">Décision :</h3><p class="form-control-plaintext" type="text" readonly="" style="text-align: center;color: var(--bs-yellow);font-family: Bungee, serif;" id="txt">Recruter ou pas</p>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <input type="file" id="datasetFile" accept=".csv" style="display:none;">
+                        <div class="col" style="text-align: center;margin-top: 27px;margin-bottom: 15px;">
+                            <button class="btn btn-primary" type="button" id="btn_getficclassification">
+                                Charger un dataset (.csv)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6" style="height: 542.2px;width: 525px;">
+                    <div class="card" style="width: 525px;">
+                        <div class="card-body" style="padding-bottom: 41px;width: 525px;height: 406px;text-align: center;">
+                            <h4 class="card-title">Veuillez entrer des valeurs</h4>
+                            <div class="col" style="width: 491px;height: 300px;margin-top: 66px;text-align: center;"><input type="text" name="TOV" id="TOV" style="text-align: center;opacity: 0.47;color: #ff0000;" placeholder="tournovers"><input type="text" name="GP" id="GP" style="text-align: center;color: #000000;opacity: 0.47;" placeholder="games played"><input type="text" name="MIN" id="MIN" style="text-align: center;color: #ff0000;opacity: 0.47;" placeholder="minutes played"><input type="text" name="PTS" id="PTS" style="text-align: center;color: var(--bs-blue);opacity: 0.47;" placeholder="points per game"><input type="text" name="FGM" id="FGM" style="text-align: center;color: #000000;opacity: 0.47;" placeholder="Field Goals Made"><input type="text" name="FGA" id="FGA" style="text-align: center;color: var(--bs-blue);opacity: 0.47;" placeholder="field goal attempts"><input type="text" name="FGP" id="FGP" style="text-align: center;color: #ff0000;opacity: 0.47;" placeholder="field goal percent"><input type="text" name="PM" id="PM" style="text-align: center;color: #000000;opacity: 0.47;" placeholder="3 point made"><input type="text" name="PA" id="PA" style="text-align: center;color: #ff0000;opacity: 0.47;" placeholder="3 point attempts"><input type="text" name="PAP" id="PAP" style="text-align: center;color: var(--bs-blue);opacity: 0.47;" placeholder="3 point attempts percent"><input type="text" name="FTM" id="FTM" style="text-align: center;color: #000000;opacity: 0.47;" placeholder="free throw made"><input type="text" name="FTA" id="FTA" style="text-align: center;color: var(--bs-blue);opacity: 0.47;" placeholder="free throw attempts"><input type="text" name="FTP" id="FTP" style="text-align: center;color: #ff0000;opacity: 0.47;" placeholder="free throw percent"><input type="text" name="OREB" id="OREB" style="text-align: center;color: #000000;opacity: 0.47;" placeholder="offensive rebounds"><input type="text" name="DREB" id="DREB" style="text-align: center;color: #ff0000;opacity: 0.47;" placeholder="deffensive rebounds"><input type="text" name="REB" id="REB" style="text-align: center;color: var(--bs-blue);opacity: 0.47;" placeholder="rebounds"><input type="text" name="AST" id="AST" style="text-align: center;color: #000000;opacity: 0.47;" placeholder="assists"><input type="text" name="STL" id="STL" style="text-align: center;color: var(--bs-blue);opacity: 0.47;" placeholder="steals"><input type="text" name="BLK" id="BLK" style="text-align: center;color: #ff0000;opacity: 0.47;" placeholder="Blocks"></div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col" style="text-align: center;height: 38px;padding-top: 0px;margin-top: 8px;margin-bottom: 19px;"><button class="btn btn-primary" type="button" id="btn_getparams">Prédire</button></div> 
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row">
+        <div class="col" style="text-align: center;">
+            <footer id="signature">Réalisé par Ketsia MULAPI - Juin@2021</footer>
+        </div>
+    </div>
+    <script src="assets/bootstrap/js/bootstrap.min.js"></script>
+    <script src="assets/js/index.js"></script>
+    <script src="assets/js/utils.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+</body>
+
+</html>
