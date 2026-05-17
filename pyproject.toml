@@ -1,0 +1,123 @@
+# Configuration globale Python pour le repo nba-predictor.
+# Couvre : ruff (lint + format), mypy (type-check), pytest (tests).
+#
+# Pas de packaging Python ici (pas de [project] table) : le repo n'est pas
+# distribué comme une lib pip, c'est une application Kubernetes.
+# Les dépendances applicatives sont dans nba-api/requirements.txt et les
+# dépendances dev/test dans requirements-dev.txt.
+
+# ---------------------------------------------------------------------------
+# Ruff : linter + formatter unifié (remplace black, isort, flake8, pylint)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+    "nba-api/static",     # Modèle pickle + dataset, pas du code à lint
+    "nba-web",            # Frontend, pas de Python ici
+    "graphify-out",       # Artefacts générés
+]
+
+[tool.ruff.lint]
+# Sélection raisonnable : pycodestyle, pyflakes, isort, pyupgrade, bugbear,
+# comprehensions, simplify, return, naming. Pas de plugin trop dogmatique.
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (organisation des imports)
+    "UP",   # pyupgrade (syntaxe moderne)
+    "B",    # bugbear (pièges courants)
+    "C4",   # comprehensions
+    "SIM",  # simplifications
+    "RET",  # return statements
+    "N",    # pep8-naming
+]
+ignore = [
+    "E501",  # line-too-long : géré par le formatter, pas besoin du warning lint en plus
+    # Les features NBA sont nommées par leurs codes officiels (TOV, GP, FGM,
+    # REB, AST, STL, BLK, FGP, PAP, FTP, etc.). Ce sont des conventions métier
+    # reconnues dans le basket pro — plus claires pour un domain-expert que
+    # `turnover`, `games_played`, `field_goal_percent`. Elles sont aussi
+    # exposées telles quelles dans l'API publique : renommer casserait les
+    # clients (frontend, DAG Airflow, intégrations tierces).
+    "N803",  # argument name should be lowercase
+    "N806",  # variable in function should be lowercase
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests : on tolère assert + variables non-snake_case (fixtures peuvent avoir des CamelCase)
+"tests/**/*.py" = ["N802", "N803", "N806"]
+# FastAPI utilise Query/File/Depends/Body comme valeurs par défaut d'arguments
+# (c'est l'idiome officiel pour déclarer la source d'un paramètre). Ruff B008
+# interdit normalement les function calls en défaut, mais c'est un faux
+# positif ici : ces wrappers sont conçus pour ça.
+"nba-api/app.py" = ["B008"]
+
+[tool.ruff.format]
+# Compatible avec black par défaut (double-quotes, trailing comma, etc.)
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# Mypy : type checking en mode strict
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_reexport = true
+show_error_codes = true
+show_column_numbers = true
+pretty = true
+
+# Modules tiers sans stubs : on les ignore au lieu de polluer les imports
+[[tool.mypy.overrides]]
+module = [
+    "sklearn.*",
+    "pandas.*",
+    "joblib.*",
+    "prometheus_client.*",
+    "airflow.*",  # stubs Airflow publics pas fiables, on ignore le module entier
+]
+ignore_missing_imports = true
+
+# Tests : moins stricts (on autorise les fixtures non typées explicitement)
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",                          # Résumé court des tests failed/error/skipped/xfailed
+    "--strict-markers",             # Refuse les markers non déclarés
+    "--strict-config",              # Refuse les options de config non reconnues
+    "--showlocals",                 # Affiche les variables locales sur fail
+]
+markers = [
+    "integration: tests d'intégration (lents, peuvent toucher du I/O)",
+    "slow: tests lents à exécuter (> 1s)",
+]
+filterwarnings = [
+    "error",  # Toute warning Python devient une erreur (force à les corriger)
+    # Exceptions ciblées :
+    "ignore::DeprecationWarning:pkg_resources",  # bruit de dépendances tierces
+    # Le modèle classifier.pikl a été sérialisé avec scikit-learn 0.24.1 (2021)
+    # mais on tourne avec une version récente (1.5+). sklearn émet une
+    # InconsistentVersionWarning légitime, mais l'inférence reste fonctionnelle
+    # pour notre régression logistique. Re-sérialisation propre prévue en
+    # Vague 6 avec pipeline d'entraînement reproductible (MLflow + DVC).
+    "ignore::sklearn.exceptions.InconsistentVersionWarning",
+]

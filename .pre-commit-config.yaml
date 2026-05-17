@@ -1,0 +1,66 @@
+# Pre-commit hooks : tournent localement sur `git commit` et bloquent le commit
+# si une vérification échoue. Évite de pousser du code que la CI rejettera.
+#
+# Installation :
+#   pip install pre-commit
+#   pre-commit install
+#
+# Lancer manuellement sur tous les fichiers (sans commit) :
+#   pre-commit run --all-files
+
+repos:
+  # Hooks basiques utiles (whitespace, fins de ligne, etc.)
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+        exclude: '^(nba-api/static/|.*\.pdf$|.*\.jpg$|.*\.pikl$)'
+      - id: check-yaml
+        # Le chart Helm Airflow contient parfois des templates Jinja qui ne
+        # sont pas du YAML valide standalone : on saute airflow-values.yaml
+        # n'a pas ce souci mais par sécurité on garde l'option.
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-toml
+      - id: detect-private-key
+
+  # Ruff : lint + format (cohérent avec pyproject.toml)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # Yamllint : config alignée sur celle de la CI
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args:
+          - -d
+          - "{extends: relaxed, rules: {line-length: disable, indentation: {indent-sequences: consistent}}}"
+
+  # Hadolint pour les Dockerfiles
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.13.0-beta
+    hooks:
+      - id: hadolint-docker
+        # Même seuil que la CI : on bloque que sur les errors, pas les warnings
+        args: [--failure-threshold, error]
+
+  # Detect-secrets : scan des secrets potentiels (clés API, mots de passe en dur)
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: '\.lock$|package-lock\.json|graphify-out/|docs/.*\.pdf$'
+
+# Configuration globale
+default_install_hook_types: [pre-commit]
+fail_fast: false  # On voit toutes les erreurs en une passe, plus efficace que de stopper au premier

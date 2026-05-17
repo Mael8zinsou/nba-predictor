@@ -1,0 +1,73 @@
+# Dependabot : monitoring automatique des dépendances + PR de mise à jour.
+# Doc : https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+#
+# Stratégie :
+#   - Hebdomadaire (le lundi matin) pour ne pas spammer
+#   - Group les patches mineurs (security + minor) en une seule PR par écosystème
+#   - 5 PR ouvertes max par écosystème pour éviter la noyade
+
+version: 2
+
+updates:
+  # Dépendances Python applicatives (nba-api)
+  - package-ecosystem: pip
+    directory: /nba-api
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, python, backend]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Dépendances Python dev/CI (requirements-dev.txt à la racine)
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, python, dev]
+    commit-message:
+      prefix: "chore(deps-dev)"
+
+  # Images Docker (Dockerfile backend + frontend)
+  - package-ecosystem: docker
+    directories:
+      - /nba-api
+      - /nba-web
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 3
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: "chore(deps-docker)"
+
+  # GitHub Actions versions (uses: action@v...)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: "chore(deps-ci)"

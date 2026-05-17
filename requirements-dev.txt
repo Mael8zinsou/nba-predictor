@@ -1,0 +1,22 @@
+# Dépendances de développement / test / CI.
+# Installées séparément de nba-api/requirements.txt (qui contient le runtime app).
+#
+# Usage local : pip install -r requirements-dev.txt -r nba-api/requirements.txt
+# Usage CI    : voir .github/workflows/ci.yml
+
+# Linting + formatting
+ruff==0.7.4
+
+# Type checking
+mypy==1.13.0
+
+# Tests
+pytest==8.3.3
+pytest-cov==6.0.0
+httpx==0.27.2          # Client async pour tester FastAPI
+
+# Pre-commit
+pre-commit==4.0.1
+
+# Stubs pour mypy (modules avec types disponibles)
+types-requests==2.32.0.20241016

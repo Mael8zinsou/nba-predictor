@@ -1,12 +1,16 @@
-from datetime import datetime
-import requests
+"""DAG Airflow déclenchant une prédiction NBA via l'API backend."""
 
+from datetime import datetime
+from typing import Any
+
+import requests
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 API_BASE = "http://nba-backend-svc.nba.svc.cluster.local:8080"
 
-def call_nba_predict():
+
+def call_nba_predict() -> dict[str, Any]:
     params = {
         "TOV": 2,
         "GP": 82,
@@ -26,17 +30,13 @@ def call_nba_predict():
         "REB": 5,
         "AST": 4,
         "STL": 1,
-        "BLK": 0.5
+        "BLK": 0.5,
     }
 
-    response = requests.get(
-        f"{API_BASE}/api/nba/predict",
-        params=params,
-        timeout=10
-    )
+    response = requests.get(f"{API_BASE}/api/nba/predict", params=params, timeout=10)
     response.raise_for_status()
 
-    result = response.json()
+    result: dict[str, Any] = response.json()
     print("NBA prediction result:", result)
 
     return result
@@ -49,7 +49,6 @@ with DAG(
     catchup=False,
     tags=["nba", "kubernetes", "ml"],
 ) as dag:
-
     predict_task = PythonOperator(
         task_id="call_nba_backend_api",
         python_callable=call_nba_predict,

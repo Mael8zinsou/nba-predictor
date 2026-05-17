@@ -17,10 +17,30 @@ Ouvrez une [issue GitHub](../../issues/new) en précisant :
 2. Forkez le repo, créez une branche descriptive : `feat/<sujet>`, `fix/<sujet>`, `docs/<sujet>`.
 3. Faites vos changements avec des commits atomiques et messages clairs (format conseillé : [Conventional Commits](https://www.conventionalcommits.org/)).
 4. Vérifiez que :
-   - Les manifestes Kubernetes restent valides (`kubectl apply --dry-run=client -f k8s/`)
-   - Le code Python passe le linter (à venir : ruff + black configurés dans la CI)
+   - Les manifestes Kubernetes restent valides (`kubectl kustomize k8s/overlays/dev`)
+   - Le code Python passe ruff + mypy (lancés automatiquement par les pre-commit hooks)
+   - Les tests passent (`pytest`)
    - Le README et la doc sont mis à jour si nécessaire
 5. Ouvrez une pull request en référençant l'issue.
+
+## Setup développement
+
+```bash
+# Dépendances dev (lint, format, type-check, tests)
+pip install -r requirements-dev.txt
+
+# Pre-commit hooks (lint + format + secret scan automatiques avant chaque commit)
+pre-commit install
+
+# Lancer tous les hooks manuellement (sans commit)
+pre-commit run --all-files
+
+# Lancer juste les vérifications individuelles
+ruff check .
+ruff format --check .
+mypy nba-api dags
+pytest
+```
 
 ## Périmètre du projet
 

@@ -1,38 +1,40 @@
-from fastapi import FastAPI, Query, File, UploadFile, Response
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import pandas as pd
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
-#from fastapi import Response
+"""FastAPI app exposant les routes de prédiction NBA + métriques Prometheus."""
+
 import time
+from typing import Any
 
-from functions import NBAPredictor   # la classe O.O (Orientée Objet)
+import pandas as pd
+from fastapi import FastAPI, File, Query, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from functions import NBAPredictor
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from pydantic import BaseModel
 
-
+# --- Métriques Prometheus ---
 REQUEST_COUNT = Counter(
     "nba_api_requests_total",
     "Total number of requests",
-    ["method", "endpoint", "http_status"]
+    ["method", "endpoint", "http_status"],
 )
 
 REQUEST_LATENCY = Histogram(
     "nba_api_request_latency_seconds",
     "Request latency in seconds",
-    ["endpoint"]
+    ["endpoint"],
 )
 
-# Charger le prédicteur UNE seule fois
+# Charger le prédicteur UNE seule fois au démarrage du worker uvicorn
 predictor = NBAPredictor()
 
-
-# FastAPI initialization
 app = FastAPI(
     title="NBA Prediction API",
-    description="API de prédiction NBA by MP DATA",
-    version="1.0.0"
+    description="API de prédiction NBA — classification 5-Year Career Longevity",
+    version="1.0.0",
 )
 
-# CORS autorisé pour tous
+# CORS large pour le contexte local/démo. Le frontend nginx fait le reverse-proxy
+# et les requêtes navigateur passent par /api/* (même origine), donc CORS sert
+# principalement aux appels Postman / curl / DAG Airflow.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,8 +44,9 @@ app.add_middleware(
 )
 
 
-# Schéma d'entrée pour prédiction à partir de paramètres
 class PlayerStats(BaseModel):
+    """Schéma Pydantic pour une fiche statistique de joueur NBA (19 features)."""
+
     GP: float
     MIN: float
     PTS: float
@@ -65,15 +68,18 @@ class PlayerStats(BaseModel):
     TOV: float
 
 
-# LES ROUTES API
+# --- Routes ---
+
 
 @app.get("/")
-def start_server():
+def start_server() -> dict[str, str]:
+    """Healthcheck minimal — confirme que l'API répond."""
     return {"message": "Le serveur NBA prediction conçu par Ketsia MULAPI a démarré !"}
 
 
 @app.get("/api/nba/predict")
-def predict(TOV: float = Query(...),
+def predict(
+    TOV: float = Query(...),
     GP: float = Query(...),
     MIN: float = Query(...),
     PTS: float = Query(...),
@@ -91,21 +97,19 @@ def predict(TOV: float = Query(...),
     REB: float = Query(...),
     AST: float = Query(...),
     STL: float = Query(...),
-    BLK: float = Query(...),):
+    BLK: float = Query(...),
+) -> dict[str, Any]:
+    """Prédit la classe d'un joueur à partir de ses 19 statistiques."""
     start = time.time()
     status = "200"
     try:
-        # ... le code original ...
         arr = predictor.build_params(
-        GP, MIN, PTS, FGM, FGA, FGP, PM, PA, PAP,
-        FTM, FTA, FTP, OREB, DREB, REB, AST, STL, BLK, TOV
-        )
-
+            GP, MIN, PTS, FGM, FGA, FGP, PM, PA, PAP,
+            FTM, FTA, FTP, OREB, DREB, REB, AST, STL, BLK, TOV,
+        )  # fmt: skip
         vect = NBAPredictor.preprocess(arr)
         pred = predictor.predict_vector(vect)
-
         return {"prediction": pred}
-        # return result
     except Exception:
         status = "500"
         raise
@@ -115,61 +119,23 @@ def predict(TOV: float = Query(...),
         REQUEST_COUNT.labels(method="GET", endpoint="/api/nba/predict", http_status=status).inc()
 
 
-# def predict_player(TOV: float = Query(...),
-#     GP: float = Query(...),
-#     MIN: float = Query(...),
-#     PTS: float = Query(...),
-#     FGM: float = Query(...),
-#     FGA: float = Query(...),
-#     FGP: float = Query(...),
-#     PM: float = Query(...),
-#     PA: float = Query(...),
-#     PAP: float = Query(...),
-#     FTM: float = Query(...),
-#     FTA: float = Query(...),
-#     FTP: float = Query(...),
-#     OREB: float = Query(...),
-#     DREB: float = Query(...),
-#     REB: float = Query(...),
-#     AST: float = Query(...),
-#     STL: float = Query(...),
-#     BLK: float = Query(...),
-# ):
-
-#     arr = predictor.build_params(
-#         GP, MIN, PTS, FGM, FGA, FGP, PM, PA, PAP,
-#         FTM, FTA, FTP, OREB, DREB, REB, AST, STL, BLK, TOV
-#     )
-
-#     vect = NBAPredictor.preprocess(arr)
-#     pred = predictor.predict_vector(vect)
-
-#     return {"prediction": pred}
-
-
 @app.get("/api/nba/info")
-def decision_by_name(Name: str = Query(..., description="Nom du joueur")):
-    """Prédiction à partir du nom dans le CSV."""
+def decision_by_name(Name: str = Query(..., description="Nom du joueur")) -> dict[str, Any]:
+    """Prédiction à partir du nom dans le CSV de référence."""
     return predictor.predict_by_name(Name)
 
 
 @app.post("/api/nba/dataset")
-def dataset_classification(file: UploadFile = File(...)):
+def dataset_classification(file: UploadFile = File(...)) -> dict[str, Any]:
     """Prédictions vectorisées sur un CSV uploadé."""
-
-    # Vérification du format
-    if not file.filename.endswith(".csv"):
+    if not file.filename or not file.filename.endswith(".csv"):
         return {"error": "Le fichier doit être un CSV."}
 
-    # Lecture du CSV
     df = pd.read_csv(file.file)
-
-    # Prédictions (batch)
     return predictor.predict_dataset(df)
 
 
-
-
 @app.get("/metrics")
-def metrics():
+def metrics() -> Response:
+    """Expose les métriques Prometheus pour scraping par ServiceMonitor."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

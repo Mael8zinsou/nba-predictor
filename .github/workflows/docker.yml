@@ -1,0 +1,135 @@
+# Build + scan + publish des images Docker backend et frontend sur GHCR
+# (GitHub Container Registry, gratuit pour repos publics).
+#
+# Politique :
+#   - PR (event=pull_request)       : build seul, scan Trivy, PAS de push
+#   - Push sur main (event=push)    : build, scan, push avec tag :main + :sha
+#   - Tag git v* (event=release)    : build, scan, push avec tag :semver + :latest
+#
+# Images publiées :
+#   - ghcr.io/<owner>/nba-backend:<tag>
+#   - ghcr.io/<owner>/nba-frontend:<tag>
+#
+# Le badge "build passing" peut pointer vers ce workflow dans le README.
+
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "nba-api/**"
+      - "nba-web/**"
+      - ".github/workflows/docker.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "nba-api/**"
+      - "nba-web/**"
+      - ".github/workflows/docker.yml"
+  release:
+    types: [published]
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write       # nécessaire pour push sur GHCR
+  security-events: write # pour upload des résultats Trivy dans GitHub Security
+
+jobs:
+  build-scan-push:
+    name: Build, scan & push ${{ matrix.image.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: nba-backend
+            context: nba-api
+          - name: nba-frontend
+            context: nba-web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Login GHCR (uniquement si on va push : pas sur les PR)
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Calcul des tags via docker/metadata-action
+      # - sur push main      : nba-backend:main, nba-backend:<sha>
+      # - sur release v1.2.3 : nba-backend:1.2.3, nba-backend:1.2, nba-backend:latest
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+
+      # Build (sans push) pour pouvoir scanner avant publication
+      - name: Build image (load locally for scan)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          push: false
+          load: true
+          tags: ${{ matrix.image.name }}:scan
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
+
+      # Trivy : scan vulnérabilités sur l'image construite localement
+      # Échoue le job si une CVE HIGH ou CRITICAL est trouvée.
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ matrix.image.name }}:scan
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true        # ignore les CVE sans patch dispo
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+      # Trivy : second run avec format SARIF, upload vers GitHub Security
+      # Ne fail PAS le job (informatif), mais alimente l'onglet Security du repo.
+      - name: Trivy scan (SARIF for GitHub Security)
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ matrix.image.name }}:scan
+          format: sarif
+          output: trivy-${{ matrix.image.name }}.sarif
+          severity: MEDIUM,HIGH,CRITICAL
+
+      - name: Upload Trivy SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.image.name }}.sarif
+          category: trivy-${{ matrix.image.name }}
+
+      # Push final (uniquement si pas PR et scan OK)
+      - name: Push to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}

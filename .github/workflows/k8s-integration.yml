@@ -1,0 +1,124 @@
+# Test d'intégration end-to-end : démarre un cluster kind, déploie l'app NBA
+# via le Makefile, vérifie que l'API répond.
+#
+# Périmètre : on teste ce qui est réellement portable en CI (cluster + app NBA),
+# pas Airflow + monitoring qui prennent trop de temps et de RAM pour un free
+# tier GitHub Actions (~14 Go RAM, mais Helm Airflow demande ~3 Go et 5+ min).
+# Si on veut tester Airflow en CI : self-hosted runner ou matrix avec test
+# séparé (à voir en V5).
+#
+# Durée typique : ~3-5 min par run.
+
+name: K8s Integration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "k8s/**"
+      - "nba-api/**"
+      - "nba-web/**"
+      - "Makefile"
+      - ".github/workflows/k8s-integration.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "k8s/**"
+      - "nba-api/**"
+      - "nba-web/**"
+      - "Makefile"
+      - ".github/workflows/k8s-integration.yml"
+
+concurrency:
+  group: k8s-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-and-test:
+    name: kind + make nba + smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Crée un cluster kind avec notre config (1 control-plane + 1 worker,
+      # port mapping 30080/30081). Utilise une image pinned cohérente avec
+      # ce qui est dans Makefile.
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: nba-predictor
+          config: k8s/kind-config.yaml
+          node_image: kindest/node:v1.32.2
+
+      - name: Verify cluster is up
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      # Build images applicatives + chargement dans kind (= make build)
+      # On utilise les commandes directement plutôt que make pour avoir un
+      # output plus lisible dans la CI (et éviter les soucis SHELL bash).
+      - name: Build backend image
+        run: docker build -t nba-backend:1.1 ./nba-api
+
+      - name: Build frontend image
+        run: docker build -t nba-frontend:1.0 ./nba-web
+
+      - name: Load images into kind
+        run: |
+          kind load docker-image nba-backend:1.1 --name nba-predictor
+          kind load docker-image nba-frontend:1.0 --name nba-predictor
+
+      # Déploie l'app via Kustomize (= make nba)
+      - name: Deploy NBA app
+        run: kubectl apply -k k8s/overlays/dev
+
+      - name: Wait for pods Ready
+        run: |
+          kubectl wait --for=condition=Ready pod \
+            -l app=nba-backend -n nba --timeout=120s
+          kubectl wait --for=condition=Ready pod \
+            -l app=nba-frontend -n nba --timeout=60s
+
+      # Smoke test : appeler /api/nba/predict via le NodePort mappé par kind
+      # (30080 = backend, voir kind-config.yaml).
+      - name: Smoke test /api/nba/predict
+        run: |
+          # Requête de prédiction avec les mêmes params que le DAG Airflow
+          response=$(curl -sf "http://localhost:30080/api/nba/predict?\
+          TOV=2&GP=82&MIN=28&PTS=14&FGM=5&FGA=11&FGP=0.45&\
+          PM=2&PA=5&PAP=0.40&FTM=2&FTA=3&FTP=0.67&\
+          OREB=1&DREB=4&REB=5&AST=4&STL=1&BLK=0.5")
+          echo "Response: $response"
+          # Vérifier que la réponse contient bien 'prediction' et 'decision'
+          echo "$response" | grep -q '"prediction"' || { echo "Missing prediction"; exit 1; }
+          echo "$response" | grep -q '"decision"' || { echo "Missing decision"; exit 1; }
+
+      - name: Smoke test /api/nba/info
+        run: |
+          response=$(curl -sf "http://localhost:30080/api/nba/info?Name=Brandon%20Ingram")
+          echo "Response: $response"
+          echo "$response" | grep -q '"decision"' || { echo "Missing decision"; exit 1; }
+
+      - name: Smoke test /metrics
+        run: |
+          response=$(curl -sf http://localhost:30080/metrics)
+          echo "$response" | grep -q 'nba_api_requests_total' || { echo "Missing metric"; exit 1; }
+
+      # Si quelque chose a foiré, on dump les logs pour diagnostic
+      - name: Dump pod logs on failure
+        if: failure()
+        run: |
+          echo "=== Pods nba ==="
+          kubectl get pods,svc -n nba -o wide
+          echo ""
+          echo "=== Events nba ==="
+          kubectl get events -n nba --sort-by='.lastTimestamp'
+          echo ""
+          echo "=== Backend logs ==="
+          kubectl logs -n nba -l app=nba-backend --tail=100 || true
+          echo ""
+          echo "=== Frontend logs ==="
+          kubectl logs -n nba -l app=nba-frontend --tail=50 || true

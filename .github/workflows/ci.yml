@@ -1,0 +1,142 @@
+# CI : lint + format + type-check sur chaque push et PR.
+#
+# Jobs en parallèle pour minimiser le temps total :
+#   - python-lint  : ruff (lint + format check) + mypy strict sur nba-api/ et dags/
+#   - python-test  : pytest unit + intégration (32 tests, 1 xfail documenté)
+#   - yaml-lint    : yamllint sur tous les .yml/.yaml du repo
+#   - k8s-validate : kubeval/kustomize sur k8s/overlays/dev
+#   - docker-lint  : hadolint sur les Dockerfiles backend/frontend
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Annuler les runs précédents sur la même branche si un nouveau push arrive
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-lint:
+    name: Python lint + type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -r nba-api/requirements.txt
+
+      - name: Ruff (lint)
+        run: ruff check .
+
+      - name: Ruff (format check)
+        run: ruff format --check .
+
+      - name: Mypy (strict)
+        run: mypy nba-api dags
+
+  python-test:
+    name: Pytest (unit + intégration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -r nba-api/requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          pytest --cov=nba-api --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 7
+
+  yaml-lint:
+    name: YAML lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install yamllint==1.35.1
+
+      - name: Run yamllint
+        # Config inline : permissive sur la line-length et l'indentation
+        # (les manifestes K8s ont leurs propres conventions, on ne veut pas
+        # se battre avec).
+        run: |
+          yamllint \
+            -d '{extends: relaxed, rules: {line-length: disable, indentation: {indent-sequences: consistent}}}' \
+            airflow-values.yaml k8s/ .github/
+
+  k8s-validate:
+    name: Kustomize build + manifest validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+
+      - name: Kustomize build overlay dev
+        # Vérifie que les manifestes Kustomize sont valides (parse + résolution
+        # des patches). N'a pas besoin d'un cluster réel.
+        run: kubectl kustomize k8s/overlays/dev > /dev/null
+
+      - name: Kustomize build overlay staging (smoke)
+        # Les overlays staging/prod sont des stubs (juste un README), donc
+        # le build n'a rien à produire. On vérifie juste qu'on n'a pas
+        # cassé la structure de répertoires.
+        run: test -f k8s/overlays/staging/README.md
+        # Quand staging aura un kustomization.yaml : décommenter la ligne suivante
+        # et supprimer le test ci-dessus :
+        # run: kubectl kustomize k8s/overlays/staging > /dev/null
+
+  docker-lint:
+    name: Hadolint (Dockerfiles)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - nba-api/Dockerfile
+          - nba-web/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hadolint ${{ matrix.dockerfile }}
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+          # On signale les warnings mais on ne fail QUE sur les errors
+          # (les warnings hadolint sont souvent stylistiques).
+          failure-threshold: error
