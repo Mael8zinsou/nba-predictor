@@ -25,7 +25,7 @@ jobs:
     name: Python lint + type-check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Python 3.10
         uses: actions/setup-python@v5
@@ -52,7 +52,7 @@ jobs:
     name: Pytest (unit + intégration)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Python 3.10
         uses: actions/setup-python@v5
@@ -82,7 +82,7 @@ jobs:
     name: YAML lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install yamllint
         run: pip install yamllint==1.35.1
@@ -100,7 +100,7 @@ jobs:
     name: Kustomize build + manifest validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
@@ -131,7 +131,7 @@ jobs:
           - nba-api/Dockerfile
           - nba-web/Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Hadolint ${{ matrix.dockerfile }}
         uses: hadolint/hadolint-action@v3.1.0

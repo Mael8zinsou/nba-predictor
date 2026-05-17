@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Crée un cluster kind avec notre config (1 control-plane + 1 worker,
       # port mapping 30080/30081). Utilise une image pinned cohérente avec
