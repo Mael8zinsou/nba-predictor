@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.14-slim
 
 # Éviter le buffering (logs Airflow / K8s lisibles)
 ENV PYTHONDONTWRITEBYTECODE=1
