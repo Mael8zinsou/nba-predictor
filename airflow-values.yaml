@@ -32,11 +32,28 @@ dags:
   persistence:
     enabled: true
     size: 1Gi
+    # ReadWriteOnce suffit : 1 seul writer (le dag-processor sync les DAGs
+    # depuis ce volume, les autres composants le lisent via gitSync ou
+    # autre mécanisme du chart). Compatible avec local-path provisioner de kind.
 
+# Logs : persistence DÉSACTIVÉE en local sur kind.
+#
+# Pourquoi : le chart Airflow demande un PVC ReadWriteMany pour les logs
+# (4 pods qui écrivent : api-server, scheduler, dag-processor, triggerer).
+# Le provisioner local de kind (rancher.io/local-path) ne supporte que
+# ReadWriteOnce — le PVC reste donc Pending indéfiniment, bloquant tous
+# les pods Airflow.
+#
+# Conséquence : les logs sont stockés dans emptyDir (volume éphémère, perdu
+# au restart du pod). Acceptable pour ce contexte local/démo car :
+#   - les logs récents restent visibles via l'UI Airflow tant que le pod tourne
+#   - les logs de DAG runs sont aussi en base Postgres (métadonnées)
+#
+# Pour un déploiement prod : provisionner un volume RWX (NFS, Longhorn,
+# CSI cloud-native EFS/Azure Files/Filestore) et réactiver persistence.
 logs:
   persistence:
-    enabled: true
-    size: 2Gi
+    enabled: false
 
 service:
   type: ClusterIP

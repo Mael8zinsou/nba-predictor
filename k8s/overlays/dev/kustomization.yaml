@@ -1,0 +1,37 @@
+# Overlay: dev (cluster kind local)
+#
+# Spécificités :
+#   - imagePullPolicy: Never (images chargées via `kind load docker-image`,
+#     pas disponibles dans une registry)
+#   - Services frontend/backend exposés en NodePort 30080/30081, mappés
+#     directement sur localhost par kind (cf. k8s/kind-config.yaml)
+#
+# Préfixe optionnel : aucun pour dev — les ressources gardent leur nom
+# d'origine pour matcher les noms attendus par le DAG Airflow et le nginx.conf.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - path: image-pull-policy-never.yaml
+    target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/part-of=nba-predictor
+
+  - path: backend-nodeport.yaml
+    target:
+      kind: Service
+      name: nba-backend-svc
+
+  - path: frontend-nodeport.yaml
+    target:
+      kind: Service
+      name: nba-frontend-svc
+
+labels:
+  - includeSelectors: false
+    pairs:
+      environment: dev

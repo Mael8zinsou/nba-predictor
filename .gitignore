@@ -97,11 +97,6 @@ $RECYCLE.BIN/
 # ---------------------------------------------------------------------------
 # Outils du projet
 # ---------------------------------------------------------------------------
-# Binaire Minikube versionné par mégarde (~90 Mo)
-minikube-linux-amd64
-minikube-darwin-amd64
-minikube-windows-amd64.exe
-
 # Sortie graphify (graphe régénérable) — sauf si on souhaite publier graph.html via Pages
 graphify-out/
 .graphify_*

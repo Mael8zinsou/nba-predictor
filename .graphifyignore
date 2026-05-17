@@ -6,9 +6,6 @@
 # Datasets tabulaires — pas de structure exploitable en graphe
 **/static/data/*.csv
 
-# Binaire Minikube Linux (~90 Mo) à la racine
-minikube-linux-amd64
-
 # Bundles tiers minifiés (Bootstrap) — pollueraient avec des centaines de nœuds sans intérêt
 nba-web/assets/bootstrap/
 

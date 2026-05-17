@@ -14,9 +14,6 @@
 **/.mypy_cache/
 **/.ruff_cache/
 
-# Binaire Minikube (~90 Mo, exécutable Linux)
-minikube-linux-amd64
-
 # Assets frontend tiers — bundles minifiés non éditables
 nba-web/assets/bootstrap/
 nba-web/assets/img/

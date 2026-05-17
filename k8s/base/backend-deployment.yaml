@@ -16,8 +16,7 @@ spec:
       containers:
         - name: backend
           image: nba-backend:1.1
-          #imagePullPolicy: IfNotPresent
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           livenessProbe:

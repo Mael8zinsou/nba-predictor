@@ -4,7 +4,7 @@ metadata:
   name: nba-backend
   namespace: monitoring
   labels:
-      release: kube-prom
+    release: kube-prom
 spec:
   namespaceSelector:
     matchNames:

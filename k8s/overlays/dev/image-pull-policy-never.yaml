@@ -1,0 +1,10 @@
+# Force imagePullPolicy: Never sur tous les Deployments NBA.
+#
+# Raison : les images sont buildées dans Docker Desktop puis chargées dans le
+# cluster kind via `kind load docker-image` (cf. make build). Elles ne sont
+# pas dans une registry distante. IfNotPresent suffirait normalement, mais
+# Never garantit qu'aucune tentative de pull silencieuse n'aura lieu si
+# kubelet considère sa couche locale comme invalide pour quelque raison.
+- op: replace
+  path: /spec/template/spec/containers/0/imagePullPolicy
+  value: Never

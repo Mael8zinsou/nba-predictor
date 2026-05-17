@@ -6,7 +6,7 @@ Merci de votre intérêt pour ce projet ! Ce repo est principalement un **showca
 
 Ouvrez une [issue GitHub](../../issues/new) en précisant :
 
-- Votre environnement (OS, version Minikube, kubectl, Helm, Docker)
+- Votre environnement (OS, versions Docker Desktop / kind / kubectl / Helm)
 - Les étapes pour reproduire
 - Le comportement attendu vs observé
 - Les logs pertinents (`kubectl logs`, output Docker, etc.)

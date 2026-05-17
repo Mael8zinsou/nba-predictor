@@ -1,0 +1,30 @@
+# Base manifests for the NBA application namespace.
+# Common to all environments. Environment-specific overrides live in
+# k8s/overlays/<env>/kustomization.yaml.
+#
+# Notes:
+#   - Services are ClusterIP by default; NodePorts are an overlay-only concern
+#     (cf. overlays/dev for local kind cluster).
+#   - imagePullPolicy defaults to IfNotPresent; overlays/dev forces Never since
+#     images are loaded via `kind load docker-image` from Docker Desktop and
+#     are not available in any remote registry.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Note : backend-servicemonitor.yaml n'est PAS inclus ici. Le CRD ServiceMonitor
+# est fourni par le chart kube-prometheus-stack (monitoring). Si on l'incluait,
+# `make nba` planterait quand monitoring n'est pas encore installé.
+# Le ServiceMonitor est appliqué séparément par la cible `make monitoring`,
+# après installation du chart Helm.
+resources:
+  - namespace.yaml
+  - backend-deployment.yaml
+  - backend-service.yaml
+  - frontend-deployment.yaml
+  - frontend-service.yaml
+
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/part-of: nba-predictor

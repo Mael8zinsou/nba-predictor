@@ -1,6 +1,6 @@
 # NBA Predictor — MLOps Pipeline
 
-> Industrialisation cloud-native d'une application ML de classification NBA : conteneurisation, orchestration Kubernetes, automatisation Airflow, observabilité Prometheus/Grafana — déployable en local sur Minikube en quelques commandes.
+> Industrialisation cloud-native d'une application ML de classification NBA : conteneurisation, orchestration Kubernetes, automatisation Airflow, observabilité Prometheus/Grafana — déployable en local sur un cluster [kind](https://kind.sigs.k8s.io/) en quelques commandes.
 
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-1.28+-326CE5?logo=kubernetes&logoColor=white)
 ![Airflow](https://img.shields.io/badge/Apache_Airflow-2.x-017CEE?logo=apacheairflow&logoColor=white)
@@ -29,7 +29,7 @@ Le résultat : un pipeline reproductible, observable et démontrable, représent
 
 ## Architecture
 
-L'architecture est cloisonnée par **3 namespaces Kubernetes** déployés sur Minikube :
+L'architecture est cloisonnée par **3 namespaces Kubernetes** déployés sur un cluster local [kind](https://kind.sigs.k8s.io/) (Kubernetes-in-Docker) :
 
 ![Architecture globale](docs/architecture_excalidraw.jpg)
 
@@ -53,8 +53,8 @@ L'architecture est cloisonnée par **3 namespaces Kubernetes** déployés sur Mi
 
 | Composant | Choix | Justification |
 |---|---|---|
-| Conteneurisation | **Docker** | Isolation, comportement identique dev/prod |
-| Orchestration | **Kubernetes (Minikube)** | Standard industriel, déclaratif |
+| Conteneurisation | **Docker Desktop** | Isolation, comportement identique dev/prod, host des conteneurs kind |
+| Orchestration | **Kubernetes via [kind](https://kind.sigs.k8s.io/)** | Cluster local rapide, sans VM, conteneurs visibles dans Docker Desktop |
 | Backend | **FastAPI** + scikit-learn | Performance, doc OpenAPI auto, intégration Prometheus native |
 | Frontend / Reverse proxy | **Nginx** | Statique performant, élimine les problèmes CORS |
 | Orchestration de tâches | **Apache Airflow** (Helm, LocalExecutor) | Standard pour DAGs, logs centralisés |
@@ -68,56 +68,56 @@ L'architecture est cloisonnée par **3 namespaces Kubernetes** déployés sur Mi
 
 ### Prérequis
 
-- [Minikube](https://minikube.sigs.k8s.io/) ≥ 1.30
-- [kubectl](https://kubernetes.io/docs/tasks/tools/) ≥ 1.28
-- [Helm](https://helm.sh/) ≥ 3.12
-- [Docker](https://docs.docker.com/get-docker/) (Desktop ou Engine)
+| Outil | Version | Rôle |
+|---|---|---|
+| [Docker Desktop](https://docs.docker.com/get-docker/) | ≥ 20.10 | Build des images + runtime kind |
+| [kind](https://kind.sigs.k8s.io/) | ≥ 0.20 | Cluster Kubernetes local (dans Docker) |
+| [kubectl](https://kubernetes.io/docs/tasks/tools/) | ≥ 1.28 | Client CLI Kubernetes |
+| [Helm](https://helm.sh/) | ≥ 3.12 | Charts Airflow et kube-prometheus-stack |
+| [GNU Make](https://www.gnu.org/software/make/) | ≥ 4.0 | Orchestration des commandes |
 
-### Déploiement en 6 étapes
+**Ressources Docker Desktop recommandées** : 4 CPU, 8 Go RAM (Settings → Resources).
+
+Pour les commandes d'installation par OS (Windows / macOS / Linux) et le dépannage, voir [docs/PREREQUISITES.md](docs/PREREQUISITES.md).
+
+### Déploiement en une commande
 
 ```bash
-# 1. Démarrer Minikube
-minikube start --cpus=4 --memory=8192
-
-# 2. Pointer Docker vers le daemon Minikube (sinon ImagePullBackOff)
-eval $(minikube docker-env)         # Linux/macOS
-# minikube -p minikube docker-env --shell powershell | Invoke-Expression   # Windows PowerShell
-
-# 3. Build des images applicatives
-docker build -t nba-backend:1.1 ./nba-api
-docker build -t nba-frontend:1.0 ./nba-web
-
-# 4. Créer les namespaces et déployer l'app NBA
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/
-
-# 5. Déployer la stack monitoring
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm install kube-prom prometheus-community/kube-prometheus-stack \
-  --namespace monitoring --create-namespace
-
-# 6. Déployer Airflow
-kubectl create namespace airflow
-kubectl apply -f k8s/airflow-postgres.yaml   # Postgres dédié AVANT le chart
-helm repo add apache-airflow https://airflow.apache.org
-helm install airflow apache-airflow/airflow \
-  --namespace airflow -f airflow-values.yaml
+make all
 ```
 
-### Accès aux interfaces
+Cette cible enchaîne : création du cluster kind → build des images dans Docker Desktop + chargement dans le cluster → déploiement de l'app NBA via Kustomize → installation de la stack monitoring (Helm) → installation d'Airflow avec son Postgres dédié. Compter 5 à 10 minutes au premier run.
+
+### Cibles utiles
 
 ```bash
-# Application NBA (frontend)
-kubectl port-forward -n nba svc/nba-frontend-svc 8080:80
-# → http://localhost:8080
+make help                    # Liste toutes les cibles disponibles
+make status                  # État des 3 namespaces (nba, airflow, monitoring)
 
-# Airflow UI (admin/admin)
-kubectl port-forward -n airflow svc/airflow-api-server 8081:8080
-# → http://localhost:8081
+# Accès aux UIs
+# Frontend NBA accessible directement (port mappé par kind) : http://localhost:30081
+make port-forward-airflow    # Airflow UI     → http://localhost:8081 (admin/admin)
+make port-forward-grafana    # Grafana        → http://localhost:3000 (admin/prom-operator)
 
-# Grafana (admin/prom-operator)
-kubectl port-forward -n monitoring svc/kube-prom-grafana 3000:80
-# → http://localhost:3000
+# Observation
+make logs-backend            # Logs streaming du backend FastAPI
+make logs-airflow            # Logs streaming du scheduler Airflow
+
+# Nettoyage
+make destroy                 # Supprime Helm releases + namespaces (garde le cluster)
+make cluster-down            # Supprime complètement le cluster kind
+```
+
+### Déploiement étape par étape
+
+Si tu préfères contrôler chaque étape (debug, démo) :
+
+```bash
+make cluster-up        # 1. Crée le cluster kind (~30s)
+make build             # 2. Build images dans Docker Desktop + charge dans kind
+make nba               # 3. Déploie l'app NBA (Kustomize overlay dev)
+make monitoring        # 4. Installe kube-prometheus-stack
+make airflow           # 5. Installe Postgres dédié + Airflow (Helm)
 ```
 
 ---
@@ -141,18 +141,22 @@ Le rapport complet ([docs/Rapport projet orchestra nba_predictor.pdf](docs/Rappo
 nba_predictor/
 ├── nba-api/                    # Backend FastAPI + modèle ML (voir nba-api/README.md)
 ├── nba-web/                    # Frontend statique (HTML + jQuery + Bootstrap)
-├── k8s/                        # Manifestes Kubernetes
-│   ├── namespace.yaml
-│   ├── backend-deployment.yaml
-│   ├── backend-service.yaml
-│   ├── backend-servicemonitor.yaml
-│   ├── frontend-deployment.yaml
-│   ├── frontend-service.yaml
-│   └── airflow-postgres.yaml   # Postgres dédié pour Airflow
+├── k8s/                        # Manifestes Kubernetes (Kustomize)
+│   ├── base/                   # Manifestes communs (Namespace, Deployments, Services, ServiceMonitor)
+│   ├── overlays/
+│   │   ├── dev/                # Overlay local (NodePort 30080/30081, imagePullPolicy: Never)
+│   │   ├── staging/            # Stub pour pré-prod (HPA, Ingress, etc.)
+│   │   └── prod/               # Stub pour prod managée (GKE/EKS/AKS)
+│   ├── kind-config.yaml        # Configuration du cluster kind (port mapping inclus)
+│   └── airflow-postgres.yaml   # Postgres dédié pour Airflow (hors Kustomize)
 ├── dags/                       # DAGs Airflow
 │   └── nba_orchestration.py
 ├── airflow-values.yaml         # Values Helm pour Airflow
-├── docs/                       # Rapport PDF + schémas Excalidraw
+├── docs/
+│   ├── PREREQUISITES.md        # Install des outils par OS + dépannage
+│   ├── Rapport projet orchestra nba_predictor.pdf
+│   └── *.jpg                   # Schémas d'architecture (Excalidraw exportés)
+├── Makefile                    # Cibles d'orchestration (make help)
 └── README.md                   # Ce fichier
 ```
 
@@ -160,11 +164,11 @@ nba_predictor/
 
 ## Points d'attention techniques
 
-- **Build dans Minikube** — `eval $(minikube docker-env)` est obligatoire avant `docker build` ; les daemons Docker Desktop et Minikube sont séparés.
-- **`imagePullPolicy: Never`** — volontaire, car les images sont buildées localement dans le cluster.
+- **Workflow images avec kind** — `docker build` (dans Docker Desktop) puis `kind load docker-image` charge l'image dans le node containerd du cluster. Pas besoin de registry. La cible `make build` enchaîne les deux automatiquement.
+- **`imagePullPolicy: Never`** — volontaire, car les images sont chargées localement dans le cluster (pas dans une registry).
+- **Port mapping kind** — le cluster expose `localhost:30080` (backend) et `localhost:30081` (frontend) directement, sans port-forward.
 - **Label `release: kube-prom`** — requis sur le ServiceMonitor pour que Prometheus le détecte.
 - **PostgreSQL d'Airflow déployé séparément** — décision motivée par les instabilités du subchart Postgres du chart Airflow officiel (cf. rapport §6).
-- **Pas d'Ingress** — accès via `kubectl port-forward` (NodePort en fallback : 30080 backend, 30081 frontend).
 
 ---
 
@@ -172,9 +176,10 @@ nba_predictor/
 
 Ce projet est en évolution active vers un vrai showcase Data Engineering. Prochaines étapes :
 
+- [x] Kustomize base + overlays (dev / staging / prod)
+- [x] Makefile pour automatiser le cycle complet (`make all`, `make destroy`, etc.)
 - [ ] CI/CD GitHub Actions (lint, tests, build, scan Trivy)
 - [ ] Tests unitaires (pytest) et d'intégration (kind)
-- [ ] Helm chart maison pour le namespace `nba`
 - [ ] Secrets K8s via SOPS/sealed-secrets (sortir le password Postgres en dur)
 - [ ] Dashboards Grafana versionnés (provisioning via ConfigMap)
 - [ ] OpenTelemetry traces (DAG Airflow → API → modèle)

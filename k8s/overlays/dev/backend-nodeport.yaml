@@ -1,0 +1,10 @@
+# Expose le backend en NodePort 30080.
+# Le port 30080 est mappé sur localhost par kind (cf. k8s/kind-config.yaml),
+# donc accessible directement via http://localhost:30080 depuis l'hôte.
+# Utile pour : curl direct, démos rapides, tests d'intégration.
+- op: replace
+  path: /spec/type
+  value: NodePort
+- op: add
+  path: /spec/ports/0/nodePort
+  value: 30080

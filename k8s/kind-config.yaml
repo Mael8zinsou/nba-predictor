@@ -1,0 +1,31 @@
+# Configuration du cluster kind (Kubernetes-in-Docker) pour le dev local.
+#
+# Topologie : 1 control-plane + 1 worker
+#   - control-plane : héberge le control-plane K8s (etcd, apiserver, scheduler, controller)
+#   - worker        : héberge les workloads applicatifs (nba, monitoring, airflow)
+#   Mimique grossièrement une topologie prod minimale, permet de tester
+#   nodeSelector / anti-affinity sans complexifier le setup.
+#
+# Port mapping (extraPortMappings) :
+#   - 30080 (NodePort backend NBA) → localhost:30080
+#   - 30081 (NodePort frontend NBA) → localhost:30081
+#   Permet 'curl localhost:30080/api/nba/predict?...' sans port-forward.
+#   Les autres services (Airflow UI, Grafana) restent accessibles via
+#   'make port-forward-airflow' / 'make port-forward-grafana'.
+#
+# Doc kind : https://kind.sigs.k8s.io/docs/user/configuration/
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: nba-predictor
+
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+      - containerPort: 30081
+        hostPort: 30081
+        protocol: TCP
+  - role: worker

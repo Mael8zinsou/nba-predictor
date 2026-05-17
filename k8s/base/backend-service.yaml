@@ -4,13 +4,12 @@ metadata:
   name: nba-backend-svc
   namespace: nba
   labels:
-      app: nba-backend
+    app: nba-backend
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: nba-backend
   ports:
-  - name: http
-    port: 8080
-    targetPort: 8080
-    nodePort: 30080
+    - name: http
+      port: 8080
+      targetPort: 8080
