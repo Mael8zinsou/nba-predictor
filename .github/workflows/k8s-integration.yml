@@ -66,10 +66,18 @@ jobs:
       - name: Build frontend image
         run: docker build -t nba-frontend:1.0 ./nba-web
 
-      - name: Load images into kind
+      # Workaround : sur runner GitHub Actions, `kind load docker-image` échoue
+      # avec "failed to detect containerd snapshotter" à cause d'une mismatch
+      # entre la config containerd du runner et celle du node kind. On passe
+      # par un tarball intermédiaire (docker save → kind load image-archive)
+      # qui contourne le problème. En local (WSL/Docker Desktop), `kind load
+      # docker-image` direct marche très bien (cf. make build).
+      - name: Load images into kind (via tarball)
         run: |
-          kind load docker-image nba-backend:1.1 --name nba-predictor
-          kind load docker-image nba-frontend:1.0 --name nba-predictor
+          docker save -o /tmp/nba-backend.tar nba-backend:1.1
+          docker save -o /tmp/nba-frontend.tar nba-frontend:1.0
+          kind load image-archive /tmp/nba-backend.tar --name nba-predictor
+          kind load image-archive /tmp/nba-frontend.tar --name nba-predictor
 
       # Déploie l'app via Kustomize (= make nba)
       - name: Deploy NBA app

@@ -95,7 +95,7 @@ jobs:
       # Trivy : scan vulnérabilités sur l'image construite localement
       # Échoue le job si une CVE HIGH ou CRITICAL est trouvée.
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ matrix.image.name }}:scan
           format: table
@@ -108,7 +108,7 @@ jobs:
       # Ne fail PAS le job (informatif), mais alimente l'onglet Security du repo.
       - name: Trivy scan (SARIF for GitHub Security)
         if: always()
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ matrix.image.name }}:scan
           format: sarif
