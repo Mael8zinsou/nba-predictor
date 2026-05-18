@@ -169,6 +169,7 @@ nba_predictor/
 - **Port mapping kind** — le cluster expose `localhost:30080` (backend) et `localhost:30081` (frontend) directement, sans port-forward.
 - **Label `release: kube-prom`** — requis sur le ServiceMonitor pour que Prometheus le détecte.
 - **PostgreSQL d'Airflow déployé séparément** — décision motivée par les instabilités du subchart Postgres du chart Airflow officiel (cf. rapport §6).
+- **Secrets via Bitnami sealed-secrets (V4.1)** — password Postgres + URL SQLAlchemy Airflow chiffrés avec la clé publique du controller (committable dans `k8s/base/airflow-credentials-sealedsecret.yaml`, déchiffrement automatique côté cluster). Pour regénérer après rotation : `make seal-secrets` (nécessite `kubeseal` CLI, cf. [docs/PREREQUISITES.md](docs/PREREQUISITES.md)).
 
 ---
 
@@ -181,7 +182,7 @@ Ce projet est en évolution active vers un vrai showcase Data Engineering. Proch
 - [x] CI/CD GitHub Actions (lint Ruff + Mypy strict, tests pytest, build Docker GHCR, scan Trivy warn-only, intégration K8s kind)
 - [x] Tests unitaires (pytest) et d'intégration (kind)
 - [x] Dockerfile multi-stage distroless + ré-activation Trivy `--exit-code 1` HIGH/CRITICAL avec `.trivyignore` documenté (Vague 4.2)
-- [ ] Secrets K8s via SOPS/sealed-secrets (sortir le password Postgres en dur)
+- [x] Secrets K8s via Bitnami sealed-secrets (password Postgres + URL SQLAlchemy Airflow chiffrés, controller dans `kube-system`) (Vague 4.1)
 - [ ] Dashboards Grafana versionnés (provisioning via ConfigMap)
 - [ ] OpenTelemetry traces (DAG Airflow → API → modèle)
 - [ ] Pipeline d'entraînement reproductible (MLflow + DVC)

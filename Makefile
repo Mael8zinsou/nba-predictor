@@ -44,6 +44,7 @@ RESET  := \033[0m
 
 .DEFAULT_GOAL := help
 .PHONY: help all cluster-up cluster-down build deploy nba airflow monitoring sync-dags \
+        sealed-secrets-install seal-secrets apply-sealed-secrets \
         port-forward-app port-forward-airflow port-forward-grafana \
         logs-backend logs-frontend logs-airflow status destroy clean-images
 
@@ -57,7 +58,7 @@ help: ## Affiche cette aide
 # Cycle complet
 # =============================================================================
 
-all: cluster-up build monitoring deploy airflow ## Déploie tout from scratch (5-10 min)
+all: cluster-up build sealed-secrets-install monitoring deploy airflow ## Déploie tout from scratch (5-10 min)
 	@printf "\n$(GREEN)[OK] Pipeline complet deploye.$(RESET)\n"
 	@printf "  Frontend NBA accessible directement : http://localhost:30081\n"
 	@printf "  Pour les UIs Airflow/Grafana : make port-forward-airflow | port-forward-grafana\n"
@@ -131,10 +132,55 @@ monitoring: ## Déploie kube-prometheus-stack (Prometheus + Grafana) via Helm + 
 	@printf "  Grafana : admin / prom-operator (voir kubectl get secret -n monitoring kube-prom-grafana)\n"
 
 # =============================================================================
+# Secrets (sealed-secrets controller + chiffrement des Secrets airflow/postgres)
+# =============================================================================
+
+sealed-secrets-install: ## Installe le controller Bitnami sealed-secrets (kube-system)
+	@printf "$(CYAN)> Installation du controller sealed-secrets...$(RESET)\n"
+	@helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets >/dev/null 2>&1 || true
+	@helm repo update sealed-secrets >/dev/null
+	@helm upgrade --install sealed-secrets sealed-secrets/sealed-secrets \
+		--namespace kube-system \
+		--set fullnameOverride=sealed-secrets-controller \
+		--wait --timeout 3m
+	@printf "$(GREEN)[OK] Controller sealed-secrets installe (kube-system).$(RESET)\n"
+
+seal-secrets: ## Genere les SealedSecret depuis k8s/secrets/*.unsealed.yaml (necessite kubeseal CLI)
+	@command -v kubeseal >/dev/null 2>&1 || { \
+		printf "$(YELLOW)[!] kubeseal CLI non trouve. Installer via :$(RESET)\n"; \
+		printf "    Windows : scoop install kubeseal  OU  https://github.com/bitnami-labs/sealed-secrets/releases\n"; \
+		printf "    macOS   : brew install kubeseal\n"; \
+		printf "    Linux   : voir https://github.com/bitnami-labs/sealed-secrets#installation\n"; \
+		exit 1; \
+	}
+	@printf "$(CYAN)> Scellement des Secrets...$(RESET)\n"
+	@kubeseal --controller-namespace=kube-system \
+		--controller-name=sealed-secrets-controller \
+		--format=yaml \
+		< k8s/secrets/airflow-credentials.unsealed.yaml \
+		> k8s/base/airflow-credentials-sealedsecret.yaml
+	@printf "$(GREEN)[OK] SealedSecret genere : k8s/base/airflow-credentials-sealedsecret.yaml$(RESET)\n"
+	@printf "  Verifier le diff puis 'git add k8s/base/airflow-credentials-sealedsecret.yaml'\n"
+
+apply-sealed-secrets: ## Applique les SealedSecret committes (controller deja installe requis)
+	@printf "$(CYAN)> Application des SealedSecret committes...$(RESET)\n"
+	@kubectl get namespace airflow >/dev/null 2>&1 || kubectl create namespace airflow
+	@kubectl apply -f k8s/base/airflow-credentials-sealedsecret.yaml
+	@printf "$(CYAN)> Attente du dechiffrement par le controller...$(RESET)\n"
+	@for secret in airflow-postgres-secret airflow-metadata-secret airflow-admin-secret; do \
+		for i in $$(seq 1 30); do \
+			if kubectl get secret $$secret -n airflow >/dev/null 2>&1; then \
+				printf "$(GREEN)  [OK] $$secret dechiffre$(RESET)\n"; break; \
+			fi; \
+			sleep 1; \
+		done; \
+	done
+
+# =============================================================================
 # Airflow (Postgres dédié + Helm chart officiel)
 # =============================================================================
 
-airflow: ## Déploie Postgres dédié puis Airflow (Helm) avec attente Ready
+airflow: apply-sealed-secrets ## Déploie Postgres dédié puis Airflow (Helm) avec attente Ready
 	@printf "$(CYAN)> Creation du namespace airflow si necessaire...$(RESET)\n"
 	@kubectl get namespace airflow >/dev/null 2>&1 || kubectl create namespace airflow
 	@printf "$(CYAN)> Deploiement de PostgreSQL dedie a Airflow...$(RESET)\n"

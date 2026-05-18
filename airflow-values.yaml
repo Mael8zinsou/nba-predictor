@@ -17,16 +17,15 @@ postgresql:
 redis:
   enabled: false
 
-# Connexion DB externe (le postgres officiel)
+# Connexion DB externe (le postgres officiel).
+# V4.1 : on consomme un Secret K8s déchiffré depuis le SealedSecret
+# `airflow-metadata-secret` (cf. k8s/base/airflow-credentials-sealedsecret.yaml).
+# La clé `connection` du Secret doit être une URL SQLAlchemy complète :
+#   postgresql+psycopg2://user:password@host:port/db
+# Le chart Airflow ignore les valeurs metadataConnection si metadataSecretName
+# est défini, donc on les supprime pour éviter toute confusion.
 data:
-  metadataConnection:
-    protocol: postgresql
-    host: airflow-postgres
-    port: 5432
-    db: airflow
-    user: airflow
-    pass: airflow
-    sslmode: disable
+  metadataSecretName: airflow-metadata-secret
 
 dags:
   persistence:

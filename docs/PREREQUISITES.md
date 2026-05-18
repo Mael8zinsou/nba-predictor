@@ -11,6 +11,7 @@ Ce document détaille les versions et commandes d'installation des outils néces
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | ≥ 1.28 | Client CLI Kubernetes |
 | [Helm](https://helm.sh/) | ≥ 3.12 | Gestion des charts (Airflow, kube-prometheus-stack) |
 | [GNU Make](https://www.gnu.org/software/make/) | ≥ 4.0 | Exécution du `Makefile` (orchestration des commandes) |
+| [kubeseal](https://github.com/bitnami-labs/sealed-secrets) | ≥ 0.27 | Chiffrement des Secrets K8s (regénération des SealedSecret) |
 
 **Pourquoi kind plutôt que Minikube ?** kind crée son cluster directement dans des conteneurs Docker (pas de VM séparée), donc :
 - Les conteneurs du cluster apparaissent dans Docker Desktop (suivi visuel)
@@ -45,9 +46,17 @@ choco install -y docker-desktop kind kubernetes-cli kubernetes-helm make
 Ou [Scoop](https://scoop.sh/) (sans admin) :
 
 ```powershell
-scoop install kind kubectl helm make
+scoop install kind kubectl helm make kubeseal
 # Docker Desktop : à installer depuis docker.com
 ```
+
+**kubeseal manuellement (si pas de Scoop)** :
+
+1. Télécharger depuis [github.com/bitnami-labs/sealed-secrets/releases](https://github.com/bitnami-labs/sealed-secrets/releases) → `kubeseal-X.X.X-windows-amd64.tar.gz`
+2. Extraire `kubeseal.exe` dans un dossier déjà dans le `Path` (ex. `C:\Users\<toi>\bin`)
+3. Vérifier : `kubeseal --version`
+
+> **Quand est-ce nécessaire ?** Uniquement pour **regénérer** un `SealedSecret` (rotation de password, ajout d'une clé). Le déploiement standard (`make all`) ne consomme que les `SealedSecret` déjà committés. kubeseal n'est donc pas indispensable pour un premier déploiement à partir du repo.
 
 **Notes Windows** :
 - Démarre Docker Desktop avant la première commande `make` (sinon `kind create cluster` échoue : pas de daemon).

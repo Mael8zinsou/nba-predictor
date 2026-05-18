@@ -69,6 +69,13 @@ secrets.yml
 *-secret.decoded.yaml
 *-secret.decoded.yml
 
+# Secrets K8s en clair générés AVANT scellement par kubeseal.
+# Convention : tout fichier *.unsealed.yaml est un Secret en clair temporaire
+# qui sert d'entrée à `kubeseal`. Le SealedSecret produit (committable) est
+# stocké dans k8s/base/*-sealedsecret.yaml.
+*.unsealed.yaml
+*.unsealed.yml
+
 # ---------------------------------------------------------------------------
 # IDE / éditeurs
 # ---------------------------------------------------------------------------

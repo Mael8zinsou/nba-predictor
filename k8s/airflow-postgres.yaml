@@ -31,12 +31,19 @@ spec:
           ports:
             - containerPort: 5432
           env:
+            # POSTGRES_DB et POSTGRES_USER restent en clair : ce sont des
+            # identifiants conventionnels, pas des secrets cryptographiques.
             - name: POSTGRES_DB
               value: airflow
             - name: POSTGRES_USER
               value: airflow
-            - name: POSTGRES_PASSWORD
-              value: airflow
+          # POSTGRES_PASSWORD vient du SealedSecret airflow-postgres-secret
+          # (cf. k8s/base/airflow-credentials-sealedsecret.yaml).
+          # Le controller sealed-secrets déchiffre côté cluster -> Secret K8s
+          # standard que postgres lit via envFrom.
+          envFrom:
+            - secretRef:
+                name: airflow-postgres-secret
           volumeMounts:
             - name: pgdata
               mountPath: /var/lib/postgresql/data
