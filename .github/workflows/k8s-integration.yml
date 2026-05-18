@@ -46,11 +46,12 @@ jobs:
       # port mapping 30080/30081). Utilise une image pinned cohérente avec
       # ce qui est dans Makefile.
       - name: Create kind cluster
-        uses: helm/kind-action@v1.10.0
+        uses: helm/kind-action@v1.12.0
         with:
           cluster_name: nba-predictor
           config: k8s/kind-config.yaml
           node_image: kindest/node:v1.32.2
+          version: v0.27.0  # version de kind elle-même, alignée avec containerd 2.x du runner
 
       - name: Verify cluster is up
         run: |
