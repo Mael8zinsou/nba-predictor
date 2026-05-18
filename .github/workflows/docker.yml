@@ -36,8 +36,9 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write       # nécessaire pour push sur GHCR
+  packages: write        # nécessaire pour push sur GHCR
   security-events: write # pour upload des résultats Trivy dans GitHub Security
+  actions: read          # requis par codeql-action/upload-sarif pour récupérer les métadonnées du run
 
 jobs:
   build-scan-push:
