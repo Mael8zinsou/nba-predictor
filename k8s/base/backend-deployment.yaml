@@ -13,12 +13,26 @@ spec:
       labels:
         app: nba-backend
     spec:
+      # Le runtime de l'image (distroless python3-debian12:nonroot) tourne déjà
+       # en UID 65532 par défaut, mais on le rend explicite côté K8s pour
+       # (a) être conforme aux PodSecurityStandards "restricted" et
+       # (b) préparer la Vague 4.3 (NetworkPolicies + PSA).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
       containers:
         - name: backend
-          image: nba-backend:1.1
+          image: nba-backend:1.2
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
           livenessProbe:
             httpGet:
               path: /docs

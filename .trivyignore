@@ -1,0 +1,31 @@
+# .trivyignore — CVE acceptées pour la CI Docker
+#
+# Format : un CVE par ligne, commentaire au-dessus expliquant pourquoi.
+# Doc : https://aquasecurity.github.io/trivy/latest/docs/configuration/filtering/
+#
+# REGLE : chaque ignore doit avoir une date d'expiration explicite (revisit by)
+# pour eviter qu'on les oublie. A re-auditer manuellement chaque trimestre.
+#
+# Contexte V4.2 : on a bumpe fastapi/python-multipart et migre vers distroless,
+# mais il reste des CVE OS dans l'image gcr.io/distroless/python3-debian12:nonroot
+# que Google n'a pas encore rebuild, et un CVE starlette qui necessite un bump
+# fastapi majeur (>=0.117) potentiellement breaking.
+
+# --- CVE OS distroless (impatchables cote projet) ---
+# Les 3 CVE Python 3.11.2 stdlib sont dans libpython3.11-{minimal,stdlib} et
+# python3.11-minimal. Patches dispo en 3.11.2-6+deb12u7 mais Google n'a pas
+# encore release l'image distroless avec les paquets a jour. Revisit by:
+# 2026-07-01 (re-pull base image + retester).
+CVE-2025-13836
+CVE-2025-8194
+CVE-2026-1299
+
+# glibc : meme histoire, fix dispo en 2.36-9+deb12u14 mais pas encore dans
+# l'image distroless. Revisit by: 2026-07-01.
+CVE-2026-0861
+
+# --- CVE Python deps ---
+# starlette 0.41.3 : fix necessite 0.49.1 qui demande fastapi >=0.117, et
+# fastapi 0.117 changeait l'API Pydantic d'une maniere qu'on n'a pas teste.
+# Reevaluer apres bump fastapi controle (V5 cleanup). Revisit by: 2026-08-01.
+CVE-2025-62727

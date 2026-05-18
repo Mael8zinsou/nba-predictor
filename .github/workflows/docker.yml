@@ -99,11 +99,12 @@ jobs:
       # install.sh exit 1). Installation via le dépôt apt officiel d'Aqua
       # = stable et auditable.
       #
-      # Mode warn-only volontaire en attendant la Vague 4.2 (Dockerfile
-      # multi-stage distroless) : python:3.10-slim traîne des CVE upstream
-      # impatchables côté projet, bloquer la CI dessus rendrait le repo
-      # ingérable. Les CVE sont visibles dans les logs CI + dans l'onglet
-      # GitHub Security (via le SARIF), donc rien n'est caché.
+      # Mode bloquant activé en Vague 4.2 (--exit-code 1) :
+      # le backend est passé sur image distroless (CVE OS réduites de ~250 à
+      # ~10) et les CVE Python deps corrigeables (fastapi, python-multipart)
+      # ont été bumpées. Les CVE restantes (OS distroless impatchable côté
+      # projet + 1 starlette qui demande un bump fastapi majeur) sont listées
+      # explicitement dans .trivyignore avec une date de revisit.
       - name: Install Trivy
         run: |
           sudo apt-get install -y wget apt-transport-https gnupg lsb-release
@@ -113,15 +114,17 @@ jobs:
           sudo apt-get install -y trivy
           trivy --version
 
-      - name: Trivy scan (table, HIGH/CRITICAL, warn-only)
-        # Affiche le résumé lisible dans les logs. exit-code=0 = ne bloque
-        # PAS la CI (cf. commentaire ci-dessus, à ré-activer en V4.2).
+      - name: Trivy scan (table, HIGH/CRITICAL, fail on new CVE)
+        # Affiche le résumé lisible. --exit-code 1 = bloque la CI si nouvelle
+        # CVE non listée dans .trivyignore. --ignorefile pointe vers le fichier
+        # racine du repo (vivre avec ces CVE est documenté ligne par ligne).
         run: |
           trivy image \
             --format table \
             --severity HIGH,CRITICAL \
             --ignore-unfixed \
-            --exit-code 0 \
+            --ignorefile .trivyignore \
+            --exit-code 1 \
             ${{ matrix.image.name }}:scan
 
       - name: Trivy scan (SARIF for GitHub Security)

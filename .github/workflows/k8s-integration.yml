@@ -62,7 +62,7 @@ jobs:
       # On utilise les commandes directement plutôt que make pour avoir un
       # output plus lisible dans la CI (et éviter les soucis SHELL bash).
       - name: Build backend image
-        run: docker build -t nba-backend:1.1 ./nba-api
+        run: docker build -t nba-backend:1.2 ./nba-api
 
       - name: Build frontend image
         run: docker build -t nba-frontend:1.0 ./nba-web
@@ -75,7 +75,7 @@ jobs:
       # docker-image` direct marche très bien (cf. make build).
       - name: Load images into kind (via tarball)
         run: |
-          docker save -o /tmp/nba-backend.tar nba-backend:1.1
+          docker save -o /tmp/nba-backend.tar nba-backend:1.2
           docker save -o /tmp/nba-frontend.tar nba-frontend:1.0
           kind load image-archive /tmp/nba-backend.tar --name nba-predictor
           kind load image-archive /tmp/nba-frontend.tar --name nba-predictor

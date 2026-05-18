@@ -42,7 +42,7 @@ Flux clés :
 ## Conventions et points d'attention
 
 - **Workflow images avec kind** : `docker build` dans Docker Desktop, puis `kind load docker-image <tag> --name nba-predictor` pour charger dans le node containerd du cluster. Pas de registry. `imagePullPolicy: Never` est appliqué par patch Kustomize dans [k8s/overlays/dev/image-pull-policy-never.yaml](k8s/overlays/dev/image-pull-policy-never.yaml) pour éviter tout pull. La cible `make build` enchaîne build + load automatiquement.
-- **Tags d'image en dur** : `nba-backend:1.1` et `nba-frontend:1.0` (dans `k8s/base/*-deployment.yaml`). Si rebuild, surchargeables via `make build BACKEND_TAG=2.0`, mais penser à bumper les tags dans les manifestes.
+- **Tags d'image en dur** : `nba-backend:1.2` (V4.2 distroless) et `nba-frontend:1.0` (dans `k8s/base/*-deployment.yaml`). Si rebuild, surchargeables via `make build BACKEND_TAG=2.0`, mais penser à bumper les tags dans les manifestes ET dans `.github/workflows/k8s-integration.yml`.
 - **Kustomize, pas Helm pour l'app NBA** : on utilise `kubectl kustomize k8s/overlays/dev | kubectl apply -f -` (ce que fait `make nba`). Helm n'est utilisé que pour les charts upstream (Airflow, kube-prometheus-stack). Décision motivée par la simplicité de l'app NBA — un chart Helm maison serait surdimensionné.
 - **CORS volontairement géré côté Nginx** (pas dans FastAPI en prod) : le frontend doit toujours appeler des chemins relatifs `/api/*`, jamais `localhost:8080`.
 - **ServiceMonitor → label `release: kube-prom` obligatoire** : sans ce label, Prometheus ne scrape pas (cf. section 6 du rapport, problème rencontré et résolu).
@@ -50,7 +50,8 @@ Flux clés :
 - **Métriques Prometheus exposées dans [nba-api/app.py](nba-api/app.py)** : `nba_api_requests_total` (Counter) et `nba_api_request_latency_seconds` (Histogram), via `/metrics`. C'est l'une des deux modifications principales du code source initial (l'autre étant le passage du frontend en chemins relatifs).
 - **Accès local via port mapping kind** : `localhost:30080` (backend NodePort) et `localhost:30081` (frontend NodePort) sont mappés directement par kind (cf. `k8s/kind-config.yaml`). Pas besoin de port-forward pour le frontend NBA. Airflow UI et Grafana restent accessibles via `make port-forward-airflow` / `make port-forward-grafana`.
 - **Le modèle ML est figé en V3** : `classifier.pikl` est un artefact pré-entraîné (sklearn 0.24.1, vieille version), pas encore de pipeline d'entraînement dans ce repo. **Bug connu** documenté en xfail strict : `preprocess()` calcule min/max sur le vecteur unique au lieu d'utiliser les stats du dataset (voir `memory/project_known_bugs.md`). Fix prévu en Vague 6 avec MLflow + scaler sérialisé.
-- **Trivy en mode warn-only assumé** (`--exit-code 0` dans `.github/workflows/docker.yml`) : `python:3.10-slim` traîne des CVE HIGH/CRITICAL upstream impatchables côté projet, bloquer la CI dessus rendrait le repo ingérable. Les CVE restent visibles dans les logs CI et dans l'onglet GitHub Security (via upload SARIF). Réactivation `--exit-code 1` prévue en Vague 4.2 avec Dockerfile multi-stage distroless.
+- **Backend en image distroless (V4.2)** : `nba-api/Dockerfile` est multi-stage — builder `python:3.11-slim` qui installe les deps dans `/install` (prefix), puis runtime `gcr.io/distroless/python3-debian12:nonroot` qui copie `/install` et utilise son Python natif via `PYTHONPATH=/install/lib/python3.11/site-packages`. UID 65532, pas de shell, pas d'apt. Le Deployment K8s a un `securityContext` strict (`runAsNonRoot`, `readOnlyRootFilesystem`, `drop ALL caps`). Python passé 3.10 → 3.11 (cohérence builder/runtime), le pickle sklearn 0.24.1 reste chargeable.
+- **Trivy en mode bloquant (V4.2)** : `--exit-code 1` actif dans `.github/workflows/docker.yml`, avec `.trivyignore` racine qui liste explicitement les CVE acceptées (CVE OS distroless impatchables côté projet + 1 starlette nécessitant fastapi ≥0.117). Chaque ignore a une `Revisit by:` date pour audit trimestriel. Le scan SARIF reste actif pour GitHub Security.
 - **Trivy installé directement via apt** (`apt-get install trivy` depuis le dépôt officiel Aqua) plutôt que via `aquasecurity/trivy-action` : 4 problèmes consécutifs avec l'action (versions inexistantes, deps `setup-trivy@v0.2.2` non publiée, `install.sh exit 1`). Pilotage direct = stable et auditable.
 - **GHCR + Code Scanning nécessitent un repo public** : `ghcr.io/mael8zinsou/nba-*` et l'onglet Security sont gratuits uniquement pour les repos publics. Sur un repo privé, Code Scanning exige GitHub Advanced Security ($49/user/mois). Le repo nba-predictor reste donc public.
 - **Permission `actions: read` requise pour upload SARIF** : `codeql-action/upload-sarif@v3` a besoin de `actions: read` en plus de `security-events: write` pour récupérer les métadonnées du run. Documenté dans le README de codeql-action mais facile à manquer.
@@ -58,7 +59,7 @@ Flux clés :
 ## Environnement de dev
 
 - Plateforme principale : **Windows + PowerShell** (utiliser la syntaxe PowerShell pour les commandes). Le cluster Kubernetes tourne via `kind` dans Docker Desktop. Le Makefile force `SHELL := C:/Program Files/Git/bin/bash.exe` sur Windows car `ezwinports.make` ne respecte pas `SHELL` avec un chemin relatif et `cmd.exe` ne gère pas les codes ANSI / UTF-8.
-- Python 3.10 pour le backend (cf. [nba-api/Dockerfile](nba-api/Dockerfile)).
+- Python 3.10 pour la CI et le dev local (`requirements-dev.txt`), **Python 3.11 dans le backend distroless** (cf. [nba-api/Dockerfile](nba-api/Dockerfile)).
 - Pour tester l'API en local hors K8s : `cd nba-api ; uvicorn app:app --reload --port 8080` puis ouvrir `http://localhost:8080/docs`.
 
 ## Workflow de développement
@@ -72,7 +73,7 @@ Flux clés :
 
 - Toucher au modèle `classifier.pikl` ou au dataset `nba_logreg.csv` hors du contexte Vague 6 (pipeline d'entraînement MLflow).
 - "Corriger" `preprocess()` au passage : le fix doit venir avec son scaler sérialisé en V6, sinon on casse les prédictions sans pouvoir re-générer le modèle. Le xfail strict du test `test_single_vector_uses_dataset_statistics` est le rappel.
-- Re-activer `Trivy --exit-code 1` avant la Vague 4.2 (Dockerfile multi-stage distroless) — sinon la CI Docker bloque sur des CVE upstream impatchables.
+- Modifier `.trivyignore` sans ajouter de date `Revisit by:` — chaque ignore doit avoir une échéance d'audit pour éviter d'accumuler de la dette CVE silencieuse.
 - Supprimer les `__pycache__/` ou autres caches versionnés — vérifier d'abord ce qui est effectivement utile.
 
 Note : le code applicatif de Ketsia (`functions.py`, frontend) est librement refactorable depuis le 2026-05-16 (cf. `memory/feedback_app_code_refactor_allowed.md`).

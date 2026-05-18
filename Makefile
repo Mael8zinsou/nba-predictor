@@ -23,7 +23,7 @@ SHELL := C:/Program Files/Git/bin/bash.exe
 endif
 
 # --- Variables (surchargables : make build BACKEND_TAG=2.0) ---
-BACKEND_TAG  ?= 1.1
+BACKEND_TAG  ?= 1.2
 FRONTEND_TAG ?= 1.0
 CLUSTER_NAME ?= nba-predictor
 OVERLAY ?= dev
