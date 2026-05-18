@@ -5,7 +5,7 @@
 # Usage CI    : voir .github/workflows/ci.yml
 
 # Linting + formatting
-ruff==0.7.4
+ruff==0.15.13
 
 # Type checking
 mypy==1.13.0
@@ -13,12 +13,12 @@ mypy==1.13.0
 # Tests
 pytest==8.3.3
 pytest-cov==6.0.0
-httpx==0.27.2          # Client async pour tester FastAPI
+httpx==0.28.1          # Client async pour tester FastAPI
 
 # Pre-commit
-pre-commit==4.0.1
+pre-commit==4.6.0
 
 # Stubs pour mypy (modules avec types disponibles)
-types-requests==2.32.0.20241016
+types-requests==2.33.0.20260518
 
 # test 
