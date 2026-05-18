@@ -178,8 +178,9 @@ Ce projet est en évolution active vers un vrai showcase Data Engineering. Proch
 
 - [x] Kustomize base + overlays (dev / staging / prod)
 - [x] Makefile pour automatiser le cycle complet (`make all`, `make destroy`, etc.)
-- [ ] CI/CD GitHub Actions (lint, tests, build, scan Trivy)
-- [ ] Tests unitaires (pytest) et d'intégration (kind)
+- [x] CI/CD GitHub Actions (lint Ruff + Mypy strict, tests pytest, build Docker GHCR, scan Trivy warn-only, intégration K8s kind)
+- [x] Tests unitaires (pytest) et d'intégration (kind)
+- [ ] Dockerfile multi-stage distroless + ré-activation Trivy `exit-code: 1` HIGH/CRITICAL (Vague 4)
 - [ ] Secrets K8s via SOPS/sealed-secrets (sortir le password Postgres en dur)
 - [ ] Dashboards Grafana versionnés (provisioning via ConfigMap)
 - [ ] OpenTelemetry traces (DAG Airflow → API → modèle)
