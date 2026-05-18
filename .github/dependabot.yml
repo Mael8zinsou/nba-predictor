@@ -5,6 +5,11 @@
 #   - Hebdomadaire (le lundi matin) pour ne pas spammer
 #   - Group les patches mineurs (security + minor) en une seule PR par écosystème
 #   - 5 PR ouvertes max par écosystème pour éviter la noyade
+#   - Majors IGNORÉS sur pip/docker : pandas 3, numpy 2, pytest 9, mypy 2, python
+#     3.14 cassent l'app (sklearn pickle 0.24.1, API breaking changes). Les bumps
+#     majors seront faits manuellement dans le contexte des Vagues 4-6 (multi-stage
+#     distroless + MLflow re-training). Les majors github-actions restent autorisés
+#     (généralement sûrs, souvent motivés par des fixes sécurité du runner).
 
 version: 2
 
@@ -24,6 +29,14 @@ updates:
     labels: [dependencies, python, backend]
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # Majors gérés manuellement (cf. en-tête : pickle sklearn 0.24.1 + breaking APIs)
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # scikit-learn figé jusqu'en Vague 6 (MLflow re-training) :
+      # - 1.8+ exige Python >=3.11, on est sur 3.10
+      # - le pickle classifier.pikl est en 0.24.1, bumper sans re-train n'apporte rien
+      - dependency-name: "scikit-learn"
 
   # Dépendances Python dev/CI (requirements-dev.txt à la racine)
   - package-ecosystem: pip
@@ -40,6 +53,12 @@ updates:
     labels: [dependencies, python, dev]
     commit-message:
       prefix: "chore(deps-dev)"
+    ignore:
+      # Majors gérés manuellement (pytest 9, mypy 2, pandas 3 = breaking)
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # scikit-learn figé (même raison que /nba-api : Python 3.10 + pickle 0.24.1)
+      - dependency-name: "scikit-learn"
 
   # Images Docker (Dockerfile backend + frontend)
   - package-ecosystem: docker
@@ -55,6 +74,10 @@ updates:
     labels: [dependencies, docker]
     commit-message:
       prefix: "chore(deps-docker)"
+    ignore:
+      # Major Python image gérée en Vague 4.2 (multi-stage distroless + pin compat sklearn)
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions versions (uses: action@v...)
   - package-ecosystem: github-actions
