@@ -49,9 +49,9 @@ RESET  := \033[0m
 
 .DEFAULT_GOAL := help
 .PHONY: help all cluster-up cluster-down build deploy nba airflow monitoring sync-dags \
-        calico-install network-policies \
+        calico-install network-policies metrics-server-install \
         sealed-secrets-install seal-secrets apply-sealed-secrets \
-        port-forward-app port-forward-airflow port-forward-grafana \
+        load-test port-forward-app port-forward-airflow port-forward-grafana \
         logs-backend logs-frontend logs-airflow status destroy clean-images
 
 help: ## Affiche cette aide
@@ -64,7 +64,7 @@ help: ## Affiche cette aide
 # Cycle complet
 # =============================================================================
 
-all: cluster-up build sealed-secrets-install monitoring deploy airflow ## Déploie tout from scratch (5-10 min)
+all: cluster-up build sealed-secrets-install metrics-server-install monitoring deploy airflow ## Déploie tout from scratch (5-10 min)
 	@printf "\n$(GREEN)[OK] Pipeline complet deploye.$(RESET)\n"
 	@printf "  Frontend NBA accessible directement : http://localhost:30081\n"
 	@printf "  Pour les UIs Airflow/Grafana : make port-forward-airflow | port-forward-grafana\n"
@@ -97,6 +97,22 @@ calico-install: ## Installe Calico (CNI + NetworkPolicy controller) via tigera-o
 	@printf "$(CYAN)> Attente que les nodes deviennent Ready (calico-node DaemonSet)...$(RESET)\n"
 	@kubectl wait --for=condition=Ready nodes --all --timeout=180s
 	@printf "$(GREEN)[OK] Calico installe, NetworkPolicies effectives.$(RESET)\n"
+
+load-test: ## Genere de la charge sur /api/nba/predict pour demontrer le scale-up HPA (V4.4)
+	@printf "$(CYAN)> Load test (60s, 50 workers paralleles) sur http://localhost:30081/api/nba/predict$(RESET)\n"
+	@printf "$(YELLOW)Observer dans un autre terminal : kubectl get hpa,pods -n nba -w$(RESET)\n"
+	@bash scripts/load-test.sh 60 50
+
+metrics-server-install: ## Installe metrics-server (requis pour HPA, V4.4)
+	@printf "$(CYAN)> Installation de metrics-server...$(RESET)\n"
+	@kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+	@printf "$(CYAN)> Patch --kubelet-insecure-tls (kind utilise des certs self-signed)...$(RESET)\n"
+	@kubectl patch deployment metrics-server -n kube-system --type='json' \
+		-p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' 2>/dev/null || \
+		printf "$(YELLOW)[!] Patch deja applique (idempotent).$(RESET)\n"
+	@printf "$(CYAN)> Attente du metrics-server Ready...$(RESET)\n"
+	@kubectl wait --for=condition=Available deployment/metrics-server -n kube-system --timeout=120s
+	@printf "$(GREEN)[OK] metrics-server pret. Test : kubectl top nodes$(RESET)\n"
 
 network-policies: ## Applique les NetworkPolicies airflow + monitoring (la NP nba est dans Kustomize)
 	@printf "$(CYAN)> Application des NetworkPolicies (airflow + monitoring)...$(RESET)\n"

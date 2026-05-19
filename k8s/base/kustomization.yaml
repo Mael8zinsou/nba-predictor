@@ -28,6 +28,9 @@ resources:
   # cibles 'airflow' et 'monitoring') car leurs namespaces sont crees par
   # Helm en dehors de Kustomize.
   - networkpolicies-nba.yaml
+  # V4.4 : HorizontalPodAutoscaler (CPU-based, min=2 max=5, threshold 70%).
+  # Necessite metrics-server installe (make metrics-server-install).
+  - backend-hpa.yaml
 
 labels:
   - includeSelectors: true

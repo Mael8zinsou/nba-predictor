@@ -45,3 +45,15 @@ spec:
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 5
+          # V4.4 : resources OBLIGATOIRES pour que le HPA calcule %CPU.
+          # Sans requests, kubectl top pods marche mais HPA reste a <unknown>.
+          # Valeurs calibrees apres mesure (kubectl top pods) : idle ~3m CPU
+          # / 145Mi memoire. On donne 100m de marge et 256Mi (sklearn pickle
+          # + pandas + modele en memoire = ~150 Mi steady-state).
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

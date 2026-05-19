@@ -1,0 +1,51 @@
+# HorizontalPodAutoscaler du backend NBA (V4.4).
+#
+# Strategie :
+#   - Min 2 replicas (HA basique : un crash ne coupe pas le service)
+#   - Max 5 replicas (limite de capacite sur le worker kind, 8 Go RAM partages)
+#   - Trigger : CPU > 70% des requests (= 70m sur 100m requests)
+#
+# Pour observer le scale-up :
+#   kubectl get hpa -n nba -w
+#   kubectl top pods -n nba
+#
+# Pour declencher de la charge :
+#   make load-test   (script load.sh dans scripts/)
+#
+# Pre-requis (idempotent) :
+#   - metrics-server installe (make metrics-server-install)
+#   - resources requests definis sur le Deployment (cf. backend-deployment.yaml)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nba-backend
+  namespace: nba
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nba-backend
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  # Behavior : on stabilise pour eviter le flapping (scale-up rapide, scale-down lent).
+  # Sans behavior, K8s 1.32 utilise des defaults agressifs au scale-down.
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2          # +2 pods max
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 min avant de descendre (evite le yo-yo)
+      policies:
+        - type: Pods
+          value: 1          # -1 pod max
+          periodSeconds: 60
