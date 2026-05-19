@@ -1,67 +1,57 @@
 # NBA Predictor — MLOps Pipeline
 
-> Industrialisation cloud-native d'une application ML de classification NBA : conteneurisation, orchestration Kubernetes, automatisation Airflow, observabilité Prometheus/Grafana — déployable en local sur un cluster [kind](https://kind.sigs.k8s.io/) en quelques commandes.
+> Industrialisation cloud-native d'une application ML de classification NBA : conteneurisation, orchestration Kubernetes, automatisation Airflow, observabilité Prometheus/Grafana, sécurité réseau et secrets. Déployable en local sur un cluster [kind](https://kind.sigs.k8s.io/) en une commande.
 
-![Kubernetes](https://img.shields.io/badge/Kubernetes-1.28+-326CE5?logo=kubernetes&logoColor=white)
-![Airflow](https://img.shields.io/badge/Apache_Airflow-2.x-017CEE?logo=apacheairflow&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-1.32-326CE5?logo=kubernetes&logoColor=white)
+![Calico](https://img.shields.io/badge/Calico-CNI-FF6900?logo=tigera&logoColor=white)
+![Airflow](https://img.shields.io/badge/Apache_Airflow-3.x-017CEE?logo=apacheairflow&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
 ![Prometheus](https://img.shields.io/badge/Prometheus-monitoring-E6522C?logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-dashboards-F46800?logo=grafana&logoColor=white)
-![Helm](https://img.shields.io/badge/Helm-charts-0F1689?logo=helm&logoColor=white)
+![Distroless](https://img.shields.io/badge/Docker-distroless-2496ED?logo=docker&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ---
 
 ## Pourquoi ce projet
 
-Une application Machine Learning fonctionnelle (modèle entraîné + API + frontend) ne suffit pas pour la production. Ce projet répond à quatre questions concrètes d'industrialisation :
+Une application Machine Learning fonctionnelle (modèle entraîné + API + frontend) ne suffit pas pour la production. Ce projet répond à plusieurs questions concrètes d'industrialisation :
 
-- **Conteneurisation** — comment isoler proprement une application ML et ses dépendances ?
-- **Orchestration** — comment piloter plusieurs composants et automatiser les appels API ?
-- **Observabilité** — comment superviser l'infrastructure et les métriques métier en temps réel ?
-- **Résilience** — comment diagnostiquer et résoudre les erreurs d'une architecture distribuée ?
+- **Conteneurisation** — image distroless, securityContext strict, scan Trivy bloquant
+- **Orchestration** — Kubernetes via kind, Kustomize, Helm pour les charts upstream
+- **Sécurité** — Secrets via sealed-secrets, NetworkPolicies zero-trust avec Calico
+- **Observabilité** — métriques métier + infra, scrape automatique via ServiceMonitor
+- **Automatisation** — DAGs Airflow, CI/CD GitHub Actions, Dependabot
 
-Le résultat : un pipeline reproductible, observable et démontrable, représentatif des solutions utilisées en production.
+Le résultat : un pipeline reproductible, observable, sécurisé et démontrable, représentatif des solutions production.
 
-> **Crédit** — l'application NBA initiale (modèle, API, frontend) est l'œuvre de [Ketsia MULAPI](https://github.com/) (juin 2021). La partie industrialisation (Docker, Kubernetes, Airflow, Prometheus, Grafana) a été conçue par **Maël M. ZINSOU** en 2026 dans le cadre du cours "Infrastructures et orchestration de données" (YNOV).
+> **Crédit** — l'application NBA initiale (modèle, API, frontend) est l'œuvre de **Ketsia MULAPI** (juin 2021). La partie industrialisation a été conçue par **Maël M. ZINSOU** en 2026 dans le cadre du cours "Infrastructures et orchestration de données" (YNOV).
 
 ---
 
 ## Architecture
 
-L'architecture est cloisonnée par **3 namespaces Kubernetes** déployés sur un cluster local [kind](https://kind.sigs.k8s.io/) (Kubernetes-in-Docker) :
-
-![Architecture globale](docs/architecture_excalidraw.jpg)
+3 namespaces Kubernetes isolés sur un cluster local [kind](https://kind.sigs.k8s.io/) avec CNI Calico :
 
 | Namespace | Composants | Rôle |
 |---|---|---|
-| `nba` | Frontend Nginx + Backend FastAPI | Application métier |
-| `airflow` | Apache Airflow (LocalExecutor) + PostgreSQL 16 | Orchestration des appels API |
+| `nba` | Frontend Nginx + Backend FastAPI (distroless) | Application métier |
+| `airflow` | Apache Airflow 3 (Helm) + PostgreSQL 16 dédié | Orchestration des appels API |
 | `monitoring` | kube-prometheus-stack (Prometheus + Grafana) | Supervision via ServiceMonitor |
 
-### Flux clés
+![Architecture globale](docs/architecture_excalidraw.jpg)
 
-![Flux de communication](docs/flux_excalidraw.jpg)
-
-- **Applicatif** : navigateur → Nginx (reverse proxy `/api/*`) → FastAPI
-- **Orchestration** : DAG `nba_orchestration` → `GET /api/nba/predict`
+**Flux principaux** :
+- **Applicatif** : navigateur → Nginx (NodePort 30081, reverse proxy `/api/*`) → FastAPI
+- **Orchestration** : DAG `nba_orchestration` → `GET /api/nba/predict` (cross-namespace autorisé)
 - **Observabilité** : FastAPI `/metrics` → Prometheus → Grafana
 
----
+**Sécurité (Vague 4)** :
+- Image backend en `gcr.io/distroless/python3-debian12:nonroot` (~10 CVE HIGH résiduelles documentées dans `.trivyignore` vs ~250 sur l'image slim)
+- Secrets Postgres/Airflow chiffrés via [Bitnami sealed-secrets](https://github.com/bitnami-labs/sealed-secrets) (committable)
+- NetworkPolicies zero-trust : pod intrus dans `default` → backend ou postgres = **timeout effectif**
 
-## Stack
-
-| Composant | Choix | Justification |
-|---|---|---|
-| Conteneurisation | **Docker Desktop** | Isolation, comportement identique dev/prod, host des conteneurs kind |
-| Orchestration | **Kubernetes via [kind](https://kind.sigs.k8s.io/)** | Cluster local rapide, sans VM, conteneurs visibles dans Docker Desktop |
-| CNI / Network Policies | **[Calico](https://www.tigera.io/project-calico/)** (tigera-operator) | Remplace kindnet pour activer les NetworkPolicies (V4.3) |
-| Backend | **FastAPI** + scikit-learn | Performance, doc OpenAPI auto, intégration Prometheus native |
-| Frontend / Reverse proxy | **Nginx** | Statique performant, élimine les problèmes CORS |
-| Orchestration de tâches | **Apache Airflow** (Helm, LocalExecutor) | Standard pour DAGs, logs centralisés |
-| Base métadonnées Airflow | **PostgreSQL 16** | Robuste, image officielle, déployée séparément du chart |
-| Métriques | **Prometheus** (`kube-prometheus-stack`) | Scraping auto via ServiceMonitor |
-| Dashboards | **Grafana** | Visualisation infra + métriques métier |
+> Détails techniques complets → [docs/doc.md](docs/doc.md).
 
 ---
 
@@ -72,14 +62,14 @@ L'architecture est cloisonnée par **3 namespaces Kubernetes** déployés sur un
 | Outil | Version | Rôle |
 |---|---|---|
 | [Docker Desktop](https://docs.docker.com/get-docker/) | ≥ 20.10 | Build des images + runtime kind |
-| [kind](https://kind.sigs.k8s.io/) | ≥ 0.20 | Cluster Kubernetes local (dans Docker) |
+| [kind](https://kind.sigs.k8s.io/) | ≥ 0.27 | Cluster Kubernetes local |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | ≥ 1.28 | Client CLI Kubernetes |
-| [Helm](https://helm.sh/) | ≥ 3.12 | Charts Airflow et kube-prometheus-stack |
+| [Helm](https://helm.sh/) | ≥ 3.12 | Charts Airflow + kube-prometheus-stack + sealed-secrets |
 | [GNU Make](https://www.gnu.org/software/make/) | ≥ 4.0 | Orchestration des commandes |
+| [kubeseal](https://github.com/bitnami-labs/sealed-secrets) | ≥ 0.27 | Regénération des SealedSecret (optionnel) |
 
-**Ressources Docker Desktop recommandées** : 4 CPU, 8 Go RAM (Settings → Resources).
-
-Pour les commandes d'installation par OS (Windows / macOS / Linux) et le dépannage, voir [docs/PREREQUISITES.md](docs/PREREQUISITES.md).
+**Ressources Docker Desktop** : 4 CPU, 8 Go RAM minimum.
+**Installation par OS** → [docs/PREREQUISITES.md](docs/PREREQUISITES.md).
 
 ### Déploiement en une commande
 
@@ -87,115 +77,65 @@ Pour les commandes d'installation par OS (Windows / macOS / Linux) et le dépann
 make all
 ```
 
-Cette cible enchaîne : création du cluster kind → build des images dans Docker Desktop + chargement dans le cluster → déploiement de l'app NBA via Kustomize → installation de la stack monitoring (Helm) → installation d'Airflow avec son Postgres dédié. Compter 5 à 10 minutes au premier run.
+Enchaîne : cluster kind + Calico CNI → build images + chargement kind → sealed-secrets controller → app NBA (Kustomize + NetworkPolicies) → monitoring stack (Helm) → Airflow + Postgres dédié. ~5-10 min au premier run.
+
+### Accès aux UIs
+
+```bash
+# Frontend NBA + API (accès direct, port mappé par kind)
+open http://localhost:30081
+
+# Airflow + Grafana (port-forward)
+make port-forward-airflow    # http://localhost:8081 (admin/admin)
+make port-forward-grafana    # http://localhost:3000 (admin/prom-operator)
+```
 
 ### Cibles utiles
 
 ```bash
-make help                    # Liste toutes les cibles disponibles
-make status                  # État des 3 namespaces (nba, airflow, monitoring)
-
-# Accès aux UIs
-# Frontend NBA accessible directement (port mappé par kind) : http://localhost:30081
-# API NBA via le reverse-proxy nginx : http://localhost:30081/api/nba/predict?...
-make port-forward-airflow    # Airflow UI     → http://localhost:8081 (admin/admin)
-make port-forward-grafana    # Grafana        → http://localhost:3000 (admin/prom-operator)
-
-# Observation
-make logs-backend            # Logs streaming du backend FastAPI
-make logs-airflow            # Logs streaming du scheduler Airflow
-
-# Nettoyage
-make destroy                 # Supprime Helm releases + namespaces (garde le cluster)
-make cluster-down            # Supprime complètement le cluster kind
+make help                # liste toutes les cibles disponibles
+make status              # état des 3 namespaces
+make logs-backend        # streaming des logs backend
+make destroy             # supprime workloads (garde le cluster)
+make cluster-down        # supprime le cluster kind
 ```
 
-### Déploiement étape par étape
-
-Si tu préfères contrôler chaque étape (debug, démo) :
-
-```bash
-make cluster-up        # 1. Crée le cluster kind (~30s)
-make build             # 2. Build images dans Docker Desktop + charge dans kind
-make nba               # 3. Déploie l'app NBA (Kustomize overlay dev)
-make monitoring        # 4. Installe kube-prometheus-stack
-make airflow           # 5. Installe Postgres dédié + Airflow (Helm)
-```
-
----
-
-## Démonstration
-
-Une fois déployé, le pipeline complet est observable de bout en bout :
-
-1. L'utilisateur fait une prédiction depuis l'interface web
-2. Le DAG Airflow `nba_orchestration` peut être déclenché manuellement pour automatiser des appels API
-3. Prometheus scrape `/metrics` du backend toutes les 15s
-4. Grafana affiche en temps réel le volume de requêtes et la latence
-
-Le rapport complet ([docs/Rapport projet orchestra nba_predictor.pdf](docs/Rapport%20projet%20orchestra%20nba_predictor.pdf)) détaille l'architecture, les choix techniques, les difficultés rencontrées et leur résolution.
-
----
-
-## Structure du repo
-
-```
-nba_predictor/
-├── nba-api/                    # Backend FastAPI + modèle ML (voir nba-api/README.md)
-├── nba-web/                    # Frontend statique (HTML + jQuery + Bootstrap)
-├── k8s/                        # Manifestes Kubernetes (Kustomize)
-│   ├── base/                   # Manifestes communs (Namespace, Deployments, Services, ServiceMonitor)
-│   ├── overlays/
-│   │   ├── dev/                # Overlay local (NodePort 30080/30081, imagePullPolicy: Never)
-│   │   ├── staging/            # Stub pour pré-prod (HPA, Ingress, etc.)
-│   │   └── prod/               # Stub pour prod managée (GKE/EKS/AKS)
-│   ├── kind-config.yaml        # Configuration du cluster kind (port mapping inclus)
-│   └── airflow-postgres.yaml   # Postgres dédié pour Airflow (hors Kustomize)
-├── dags/                       # DAGs Airflow
-│   └── nba_orchestration.py
-├── airflow-values.yaml         # Values Helm pour Airflow
-├── docs/
-│   ├── PREREQUISITES.md        # Install des outils par OS + dépannage
-│   ├── Rapport projet orchestra nba_predictor.pdf
-│   └── *.jpg                   # Schémas d'architecture (Excalidraw exportés)
-├── Makefile                    # Cibles d'orchestration (make help)
-└── README.md                   # Ce fichier
-```
-
----
-
-## Points d'attention techniques
-
-- **Workflow images avec kind** — `docker build` (dans Docker Desktop) puis `kind load docker-image` charge l'image dans le node containerd du cluster. Pas besoin de registry. La cible `make build` enchaîne les deux automatiquement.
-- **`imagePullPolicy: Never`** — volontaire, car les images sont chargées localement dans le cluster (pas dans une registry).
-- **Port mapping kind** — depuis V4.3, seul le frontend est exposé sur `localhost:30081`. L'API est accessible via le reverse-proxy nginx (`localhost:30081/api/*` → backend ClusterIP). Le backend n'est plus directement accessible depuis l'hôte (isolation NetworkPolicies).
-- **Label `release: kube-prom`** — requis sur le ServiceMonitor pour que Prometheus le détecte.
-- **PostgreSQL d'Airflow déployé séparément** — décision motivée par les instabilités du subchart Postgres du chart Airflow officiel (cf. rapport §6).
-- **Secrets via Bitnami sealed-secrets (V4.1)** — password Postgres + URL SQLAlchemy Airflow chiffrés avec la clé publique du controller (committable dans `k8s/base/airflow-credentials-sealedsecret.yaml`, déchiffrement automatique côté cluster). Pour regénérer après rotation : `make seal-secrets` (nécessite `kubeseal` CLI, cf. [docs/PREREQUISITES.md](docs/PREREQUISITES.md)).
+> Cookbook complet des commandes par vague → [docs/key_commands.md](docs/key_commands.md).
 
 ---
 
 ## Roadmap
 
-Ce projet est en évolution active vers un vrai showcase Data Engineering. Prochaines étapes :
+- [x] Portfolio fundamentals (README, LICENSE, CONTRIBUTING) **— Vague 1**
+- [x] Developer experience (Makefile, Kustomize overlays dev/staging/prod) **— Vague 2**
+- [x] Migration Minikube → kind **— Vague 2bis**
+- [x] CI/CD GitHub Actions (5 jobs lint+test, build Docker GHCR, k8s integration) **— Vague 3**
+- [x] Tests unitaires (pytest) et d'intégration (FastAPI TestClient + kind smoke) **— Vague 3**
+- [x] Secrets K8s via Bitnami sealed-secrets (Postgres + URL SQLAlchemy chiffrés) **— Vague 4.1**
+- [x] Dockerfile multi-stage distroless + Trivy `--exit-code 1` + securityContext strict **— Vague 4.2**
+- [x] NetworkPolicies zero-trust + CNI Calico via tigera-operator **— Vague 4.3**
+- [ ] HorizontalPodAutoscaler + Ingress + PodDisruptionBudget **— Vague 4.4/4.5**
+- [ ] Observabilité avancée : Grafana dashboards versionnés, Alertmanager, Loki **— Vague 5**
+- [ ] Pipeline d'entraînement reproductible (MLflow + DVC + fix bug `preprocess()`) **— Vague 6**
+- [ ] Présentation portfolio : Medium article, ADR, demo vidéo, GitHub Pages **— Vague 7**
 
-- [x] Kustomize base + overlays (dev / staging / prod)
-- [x] Makefile pour automatiser le cycle complet (`make all`, `make destroy`, etc.)
-- [x] CI/CD GitHub Actions (lint Ruff + Mypy strict, tests pytest, build Docker GHCR, scan Trivy warn-only, intégration K8s kind)
-- [x] Tests unitaires (pytest) et d'intégration (kind)
-- [x] Dockerfile multi-stage distroless + ré-activation Trivy `--exit-code 1` HIGH/CRITICAL avec `.trivyignore` documenté (Vague 4.2)
-- [x] Secrets K8s via Bitnami sealed-secrets (password Postgres + URL SQLAlchemy Airflow chiffrés, controller dans `kube-system`) (Vague 4.1)
-- [x] NetworkPolicies zero-trust (default-deny + allows minimaux) + CNI Calico via tigera-operator (Vague 4.3)
-- [ ] Dashboards Grafana versionnés (provisioning via ConfigMap)
-- [ ] OpenTelemetry traces (DAG Airflow → API → modèle)
-- [ ] Pipeline d'entraînement reproductible (MLflow + DVC)
-- [ ] DAG Airflow plus réaliste (scraping stats NBA → enrichissement → prédiction batch)
+---
+
+## Documentation
+
+| Document | Audience | Quoi |
+|---|---|---|
+| [README.md](README.md) (ce fichier) | Visiteur, recruteur | Pitch, archi, quickstart, roadmap |
+| [docs/doc.md](docs/doc.md) | Ingénieur, contributeur | Référence technique profonde : pourquoi des choix, débogage, ADR |
+| [docs/key_commands.md](docs/key_commands.md) | Toi, futur dev | Cookbook chronologique : commandes exactes par vague |
+| [docs/PREREQUISITES.md](docs/PREREQUISITES.md) | Tout le monde | Install des outils par OS (Windows / macOS / Linux) |
+| [docs/Rapport projet orchestra nba_predictor.pdf](docs/Rapport%20projet%20orchestra%20nba_predictor.pdf) | Jury / lecteur académique | Rapport rendu pour le cours (V3) |
 
 ---
 
 ## License
 
-[MIT](LICENSE) — voir le fichier `LICENSE` pour les détails.
+[MIT](LICENSE).
 
 Le code applicatif initial est © Ketsia MULAPI 2021. L'industrialisation est © Maël M. ZINSOU 2026.
 
