@@ -135,6 +135,7 @@ make cluster-down        # supprime le cluster kind
 | [README.md](README.md) (ce fichier) | Visiteur, recruteur | Pitch, archi, quickstart, roadmap |
 | [docs/doc.md](docs/doc.md) | Ingénieur, contributeur | Référence technique profonde : pourquoi des choix, débogage, ADR |
 | [docs/key_commands.md](docs/key_commands.md) | Toi, futur dev | Cookbook chronologique : commandes exactes par vague |
+| [docs/pour_les_nuls.md](docs/pour_les_nuls.md) | Sortant de bootcamp, curieux non-infra | Vulgarisation : pourquoi chaque outil existe, en analogies |
 | [docs/PREREQUISITES.md](docs/PREREQUISITES.md) | Tout le monde | Install des outils par OS (Windows / macOS / Linux) |
 | [docs/Rapport projet orchestra nba_predictor.pdf](docs/Rapport%20projet%20orchestra%20nba_predictor.pdf) | Jury / lecteur académique | Rapport rendu pour le cours (V3) |
 

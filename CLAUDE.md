@@ -54,5 +54,6 @@ Note : le code applicatif de Ketsia (`functions.py`, frontend) est librement ref
 
 - **Architecture, ADR, bugs connus** → [docs/doc.md](docs/doc.md)
 - **Commandes par vague + dépannage** → [docs/key_commands.md](docs/key_commands.md)
+- **Vulgarisation pour profil non-infra** → [docs/pour_les_nuls.md](docs/pour_les_nuls.md)
 - **Roadmap des vagues à venir** → section Roadmap du [README.md](README.md)
 - **Layout du repo (vue d'ensemble)** → §4 de [docs/doc.md](docs/doc.md#4-structure-du-repository)
