@@ -1,0 +1,46 @@
+# Ingress NBA (V4.5) — remplace l'expose NodePort 30081 du frontend.
+#
+# Routing :
+#   http://nba.localhost/        -> nba-frontend-svc:80 (statique HTML/CSS/JS)
+#   http://nba.localhost/api/*   -> nba-frontend-svc:80 puis reverse-proxy
+#                                   nginx vers nba-backend-svc:8080
+#
+# On garde le reverse-proxy /api/* dans nginx (cf. nba-web/nginx.conf) plutot
+# que de le router via Ingress directement vers le backend, parce que :
+#   - C'est le pattern actuel deja teste (V3+)
+#   - Permet de garder le frontend comme single point of failure / entry
+#   - Si on veut router /api/* vers le backend via Ingress en V4.5bis,
+#     il suffira d'ajouter un second 'paths' avec service: nba-backend-svc.
+#
+# Resolution DNS nba.localhost :
+#   - Linux/macOS : ajouter `127.0.0.1 nba.localhost` a /etc/hosts
+#   - Windows     : C:\Windows\System32\drivers\etc\hosts (admin requis)
+#   - WSL         : modifier le hosts Windows hote (pas celui de WSL)
+#   Sur certaines distros recentes, `*.localhost` est resolu automatiquement
+#   en 127.0.0.1 par systemd-resolved (man systemd-resolved#8).
+#
+# TLS (HTTPS) : non configure pour ce projet. Pour activer :
+#   - Installer cert-manager
+#   - Ajouter une section tls: avec un secret-name (cert auto-genere)
+#   - Annotations cert-manager.io/cluster-issuer: letsencrypt-staging
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nba
+  namespace: nba
+  annotations:
+    # Force le path-prefix exact (sinon match trop large)
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: nba.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nba-frontend-svc
+                port:
+                  number: 80

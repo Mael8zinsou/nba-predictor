@@ -82,12 +82,18 @@ Enchaîne : cluster kind + Calico CNI → build images + chargement kind → sea
 ### Accès aux UIs
 
 ```bash
-# Frontend NBA + API (accès direct, port mappé par kind)
-open http://localhost:30081
+# Frontend NBA + API via Ingress (V4.5)
+open http://nba.localhost
+# Pré-requis : ajouter '127.0.0.1 nba.localhost' à /etc/hosts (Linux/macOS)
+# ou C:\Windows\System32\drivers\etc\hosts (Windows). Sur systemd-resolved
+# récent, *.localhost résout automatiquement.
 
 # Airflow + Grafana (port-forward)
 make port-forward-airflow    # http://localhost:8081 (admin/admin)
 make port-forward-grafana    # http://localhost:3000 (admin/prom-operator)
+
+# Démo HPA scale-up sous charge (V4.4)
+make load-test               # 50 workers x 60s, observer : kubectl get hpa -n nba -w
 ```
 
 ### Cibles utiles
@@ -114,7 +120,8 @@ make cluster-down        # supprime le cluster kind
 - [x] Secrets K8s via Bitnami sealed-secrets (Postgres + URL SQLAlchemy chiffrés) **— Vague 4.1**
 - [x] Dockerfile multi-stage distroless + Trivy `--exit-code 1` + securityContext strict **— Vague 4.2**
 - [x] NetworkPolicies zero-trust + CNI Calico via tigera-operator **— Vague 4.3**
-- [ ] HorizontalPodAutoscaler + Ingress + PodDisruptionBudget **— Vague 4.4/4.5**
+- [x] HorizontalPodAutoscaler backend (CPU 70%, min 2 max 5) + metrics-server + load test **— Vague 4.4**
+- [x] Ingress nginx (`nba.localhost`) + PodDisruptionBudgets backend/frontend **— Vague 4.5**
 - [ ] Observabilité avancée : Grafana dashboards versionnés, Alertmanager, Loki **— Vague 5**
 - [ ] Pipeline d'entraînement reproductible (MLflow + DVC + fix bug `preprocess()`) **— Vague 6**
 - [ ] Présentation portfolio : Medium article, ADR, demo vidéo, GitHub Pages **— Vague 7**

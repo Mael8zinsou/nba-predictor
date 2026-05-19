@@ -1,0 +1,23 @@
+# PodDisruptionBudget backend (V4.5).
+#
+# Garantit qu'au moins 1 replica reste up pendant un drain volontaire (upgrade
+# de node, eviction par kubectl drain, autoscaling cluster down, etc.).
+# Cohérent avec HPA min=2 : meme si on est au minimum, on garde 1 pod en vie.
+#
+# Ne protege PAS des disruptions involontaires (crash de pod, OOMKill, etc.) :
+# pour ça, c'est le replicas + readinessProbe qui jouent.
+#
+# Pour tester (necessite plusieurs nodes ou simuler le drain) :
+#   kubectl get pdb -n nba
+#   kubectl drain nba-predictor-worker --ignore-daemonsets --delete-emptydir-data
+#   # -> les pods se decalent sur l'autre node tant que minAvailable est tenu
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nba-backend
+  namespace: nba
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: nba-backend

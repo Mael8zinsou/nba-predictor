@@ -1,0 +1,16 @@
+# PodDisruptionBudget frontend (V4.5).
+#
+# Note : le frontend a replicas=1 par defaut. Avec minAvailable=1, le pod
+# devient non-evictable lors d'un drain volontaire (le drain bloque). C'est
+# accepte pour ce projet (frontend nginx ultra-leger, downtime upgrade
+# tolerable). En prod : passer replicas=2 + maxUnavailable=1 a la place.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nba-frontend
+  namespace: nba
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: nba-frontend

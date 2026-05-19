@@ -49,7 +49,7 @@ RESET  := \033[0m
 
 .DEFAULT_GOAL := help
 .PHONY: help all cluster-up cluster-down build deploy nba airflow monitoring sync-dags \
-        calico-install network-policies metrics-server-install \
+        calico-install network-policies metrics-server-install ingress-install \
         sealed-secrets-install seal-secrets apply-sealed-secrets \
         load-test port-forward-app port-forward-airflow port-forward-grafana \
         logs-backend logs-frontend logs-airflow status destroy clean-images
@@ -64,7 +64,7 @@ help: ## Affiche cette aide
 # Cycle complet
 # =============================================================================
 
-all: cluster-up build sealed-secrets-install metrics-server-install monitoring deploy airflow ## Déploie tout from scratch (5-10 min)
+all: cluster-up build sealed-secrets-install metrics-server-install ingress-install monitoring deploy airflow ## Déploie tout from scratch (5-10 min)
 	@printf "\n$(GREEN)[OK] Pipeline complet deploye.$(RESET)\n"
 	@printf "  Frontend NBA accessible directement : http://localhost:30081\n"
 	@printf "  Pour les UIs Airflow/Grafana : make port-forward-airflow | port-forward-grafana\n"
@@ -102,6 +102,18 @@ load-test: ## Genere de la charge sur /api/nba/predict pour demontrer le scale-u
 	@printf "$(CYAN)> Load test (60s, 50 workers paralleles) sur http://localhost:30081/api/nba/predict$(RESET)\n"
 	@printf "$(YELLOW)Observer dans un autre terminal : kubectl get hpa,pods -n nba -w$(RESET)\n"
 	@bash scripts/load-test.sh 60 50
+
+ingress-install: ## Installe nginx-ingress controller (V4.5, requis pour Ingress nba.localhost)
+	@printf "$(CYAN)> Installation de ingress-nginx controller (kind-friendly)...$(RESET)\n"
+	@kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/kind/deploy.yaml
+	@printf "$(CYAN)> Attente du controller Ready (peut prendre 60-90s, image lourde)...$(RESET)\n"
+	@kubectl wait --namespace ingress-nginx \
+		--for=condition=Ready pod \
+		--selector=app.kubernetes.io/component=controller \
+		--timeout=180s
+	@printf "$(GREEN)[OK] ingress-nginx pret. Test : curl http://nba.localhost$(RESET)\n"
+	@printf "  Si nba.localhost ne resout pas : ajouter '127.0.0.1 nba.localhost' a /etc/hosts (Linux/macOS)\n"
+	@printf "  ou C:\\Windows\\System32\\drivers\\etc\\hosts (Windows)\n"
 
 metrics-server-install: ## Installe metrics-server (requis pour HPA, V4.4)
 	@printf "$(CYAN)> Installation de metrics-server...$(RESET)\n"

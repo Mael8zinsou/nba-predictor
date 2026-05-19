@@ -63,10 +63,30 @@ jobs:
           kubectl apply -f k8s/calico-installation.yaml
           kubectl wait --for=condition=Ready nodes --all --timeout=180s
 
+      # V4.4 : metrics-server requis pour le HPA (sinon HPA reste a <unknown>).
+      # Patch --kubelet-insecure-tls obligatoire sur kind (certs self-signed).
+      - name: Install metrics-server
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+          kubectl patch deployment metrics-server -n kube-system --type='json' \
+            -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+          kubectl wait --for=condition=Available deployment/metrics-server -n kube-system --timeout=120s
+
+      # V4.5 : ingress-nginx controller requis pour router nba.localhost.
+      # Manifest "kind-friendly" qui configure le nodeSelector ingress-ready=true.
+      - name: Install ingress-nginx controller
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/kind/deploy.yaml
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=Ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=180s
+
       - name: Verify cluster is up
         run: |
           kubectl cluster-info
           kubectl get nodes
+          kubectl get pods -n ingress-nginx
 
       # Build images applicatives + chargement dans kind (= make build)
       # On utilise les commandes directement plutôt que make pour avoir un
@@ -101,26 +121,39 @@ jobs:
           kubectl wait --for=condition=Ready pod \
             -l app=nba-frontend -n nba --timeout=60s
 
-      # Smoke tests via le NodePort frontend (30081) qui reverse-proxy /api/*
-      # vers le backend (V4.3 : backend en ClusterIP, isole par NetworkPolicies).
-      # Le frontend est expose en NodePort 30081, mappe sur localhost par kind.
-      - name: Smoke test /api/nba/predict (via frontend nginx)
+      # Smoke tests via l'Ingress nba.localhost (V4.5).
+      # On utilise --resolve pour eviter d'editer /etc/hosts du runner.
+      # Le trafic passe par : ingress-nginx -> frontend nginx (ClusterIP)
+      # -> reverse-proxy /api/* -> nba-backend-svc (ClusterIP).
+      - name: Smoke test /api/nba/predict (via Ingress)
         run: |
-          # Requête de prédiction avec les mêmes params que le DAG Airflow
-          response=$(curl -sf "http://localhost:30081/api/nba/predict?\
+          response=$(curl -sf --resolve "nba.localhost:80:127.0.0.1" "http://nba.localhost/api/nba/predict?\
           TOV=2&GP=82&MIN=28&PTS=14&FGM=5&FGA=11&FGP=0.45&\
           PM=2&PA=5&PAP=0.40&FTM=2&FTA=3&FTP=0.67&\
           OREB=1&DREB=4&REB=5&AST=4&STL=1&BLK=0.5")
           echo "Response: $response"
-          # Vérifier que la réponse contient bien 'prediction' et 'decision'
           echo "$response" | grep -q '"prediction"' || { echo "Missing prediction"; exit 1; }
           echo "$response" | grep -q '"decision"' || { echo "Missing decision"; exit 1; }
 
-      - name: Smoke test /api/nba/info (via frontend nginx)
+      - name: Smoke test /api/nba/info (via Ingress)
         run: |
-          response=$(curl -sf "http://localhost:30081/api/nba/info?Name=Brandon%20Ingram")
+          response=$(curl -sf --resolve "nba.localhost:80:127.0.0.1" "http://nba.localhost/api/nba/info?Name=Brandon%20Ingram")
           echo "Response: $response"
           echo "$response" | grep -q '"decision"' || { echo "Missing decision"; exit 1; }
+
+      - name: Verify HPA + PDB are ready
+        run: |
+          kubectl get hpa,pdb -n nba
+          # HPA peut etre <unknown> pendant 30s, on attend qu'il converge
+          for i in $(seq 1 12); do
+            current=$(kubectl get hpa nba-backend -n nba -o jsonpath='{.status.currentMetrics[0].resource.current.averageUtilization}' 2>/dev/null)
+            if [ -n "$current" ]; then
+              echo "HPA stabilise : ${current}% CPU"
+              break
+            fi
+            echo "Attente HPA ($i/12)..."
+            sleep 5
+          done
 
       - name: Smoke test /metrics (via kubectl exec, route ops non publique)
         run: |

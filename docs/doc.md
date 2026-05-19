@@ -14,11 +14,13 @@
 - [3. Stack technique détaillée](#3-stack-technique-détaillée)
 - [4. Structure du repository](#4-structure-du-repository)
 - [5. Conventions et patterns](#5-conventions-et-patterns)
-- [6. Sécurité (Vague 4)](#6-sécurité-vague-4)
+- [6. Sécurité et résilience (Vague 4)](#6-sécurité-et-résilience-vague-4)
   - [6.1 Image distroless (V4.2)](#61-image-distroless-v42)
   - [6.2 SealedSecrets (V4.1)](#62-sealedsecrets-v41)
   - [6.3 NetworkPolicies + Calico (V4.3)](#63-networkpolicies--calico-v43)
   - [6.4 Trivy et politique `.trivyignore`](#64-trivy-et-politique-trivyignore)
+  - [6.5 HorizontalPodAutoscaler + metrics-server (V4.4)](#65-horizontalpodautoscaler--metrics-server-v44)
+  - [6.6 Ingress + PodDisruptionBudgets (V4.5)](#66-ingress--poddisruptionbudgets-v45)
 - [7. CI/CD GitHub Actions](#7-cicd-github-actions)
 - [8. Tests](#8-tests)
 - [9. Bugs connus et dette technique](#9-bugs-connus-et-dette-technique)
@@ -59,9 +61,12 @@ Le cluster tourne dans Docker Desktop (1 control-plane + 1 worker), avec **Calic
 graph TB
     subgraph "Docker Desktop"
         subgraph "kind cluster (Calico CNI)"
+            subgraph "Namespace ingress-nginx"
+                IC[ingress-nginx<br/>hostPort 80/443]
+            end
             subgraph "Namespace nba (role=app)"
-                FE[Frontend Nginx<br/>NodePort 30081]
-                BE[Backend FastAPI<br/>ClusterIP 8080<br/>distroless nonroot]
+                FE[Frontend Nginx<br/>ClusterIP 80]
+                BE[Backend FastAPI<br/>ClusterIP 8080<br/>distroless nonroot<br/>HPA 2-5 replicas]
             end
             subgraph "Namespace airflow (role=orchestration)"
                 PG[(PostgreSQL 16)]
@@ -82,7 +87,8 @@ graph TB
             end
         end
     end
-    User([Navigateur]) -->|localhost:30081| FE
+    User([Navigateur]) -->|nba.localhost:80| IC
+    IC -->|Ingress route /| FE
     FE -->|/api/* reverse-proxy| BE
     AS -.->|DAG nba_orchestration<br/>GET /api/nba/predict| BE
     PR -.->|scrape /metrics 15s| BE
@@ -99,16 +105,19 @@ Trois flux principaux, tous testables :
 ```mermaid
 sequenceDiagram
     participant U as Utilisateur
-    participant N as Nginx Frontend<br/>(NodePort 30081)
+    participant I as ingress-nginx<br/>(hostPort 80)
+    participant N as Nginx Frontend<br/>(ClusterIP)
     participant F as FastAPI Backend<br/>(ClusterIP 8080)
     participant M as Modèle ML<br/>(classifier.pikl)
     participant P as Prometheus
     participant A as Airflow Scheduler
 
     Note over U,M: Flux 1 — Prédiction utilisateur (navigateur)
-    U->>N: GET localhost:30081/
+    U->>I: GET http://nba.localhost/
+    I->>N: Ingress route /
     N-->>U: index.html (formulaire)
-    U->>N: POST /api/nba/predict?GP=82&...
+    U->>I: POST /api/nba/predict?GP=82&...
+    I->>N: Ingress route /api/*
     N->>F: reverse-proxy /api/* (ClusterIP)
     F->>M: predict(vecteur)
     M-->>F: classe (0/1)
@@ -146,6 +155,8 @@ sequenceDiagram
 | Cluster local | **[kind](https://kind.sigs.k8s.io/)** | ≥ 0.27 | Kubernetes-in-Docker, plus rapide que Minikube, conteneurs visibles dans Docker Desktop |
 | Image node kind | `kindest/node:v1.32.2` | pinned SHA | v1.35 a un bug kubeadm/API v1beta3 ([kind#3994](https://github.com/kubernetes-sigs/kind/issues/3994)) |
 | CNI | **[Calico](https://www.tigera.io/project-calico/)** via tigera-operator | v3.28.2 | Supporte NetworkPolicies (kindnet par défaut ne les respecte pas) |
+| Ingress controller | **[ingress-nginx](https://kubernetes.github.io/ingress-nginx/)** (manifest kind-friendly) | v1.11.3 | Standard de facto, Ingress L7 vers `nba.localhost` (V4.5) |
+| Metrics / HPA | **[metrics-server](https://github.com/kubernetes-sigs/metrics-server)** | latest | Requis pour `kubectl top` + HorizontalPodAutoscaler (V4.4) |
 | Backend | **FastAPI** + scikit-learn | 0.115.6 / 1.5.1 | Performance async, doc OpenAPI auto, Prometheus client natif |
 | Backend image | **`gcr.io/distroless/python3-debian12:nonroot`** | Python 3.11.2 | Pas de shell ni d'apt, UID 65532, surface d'attaque drastiquement réduite |
 | Frontend / Reverse proxy | **Nginx** | 1.31 (alpine) | Statique performant, élimine les problèmes CORS, single entry point |
@@ -183,11 +194,15 @@ nba_predictor/
 ├── k8s/                              # Manifestes Kubernetes (Kustomize)
 │   ├── base/                         # Manifestes communs à tous les overlays
 │   │   ├── namespace.yaml            # ns nba (labels : role=app, part-of)
-│   │   ├── backend-deployment.yaml   # securityContext strict (V4.2)
-│   │   ├── backend-service.yaml      # ClusterIP (depuis V4.3)
+│   │   ├── backend-deployment.yaml   # securityContext strict (V4.2) + resources (V4.4)
+│   │   ├── backend-service.yaml      # ClusterIP (V4.3+)
 │   │   ├── backend-servicemonitor.yaml  # Pour Prometheus (label release: kube-prom)
+│   │   ├── backend-hpa.yaml          # V4.4 : HPA CPU 70%, min=2 max=5
+│   │   ├── backend-pdb.yaml          # V4.5 : PodDisruptionBudget min=1
 │   │   ├── frontend-deployment.yaml
-│   │   ├── frontend-service.yaml
+│   │   ├── frontend-service.yaml     # ClusterIP (V4.5+, plus de NodePort)
+│   │   ├── frontend-pdb.yaml         # V4.5 : PodDisruptionBudget min=1
+│   │   ├── nba-ingress.yaml          # V4.5 : Ingress host nba.localhost
 │   │   ├── networkpolicies-nba.yaml          # V4.3 : default-deny + allows
 │   │   ├── networkpolicies-airflow.yaml      # V4.3
 │   │   ├── networkpolicies-monitoring.yaml   # V4.3
@@ -195,7 +210,6 @@ nba_predictor/
 │   │   └── kustomization.yaml
 │   ├── overlays/
 │   │   ├── dev/                      # Overlay local
-│   │   │   ├── frontend-nodeport.yaml         # NodePort 30081
 │   │   │   ├── image-pull-policy-never.yaml   # Images chargées via kind load
 │   │   │   └── kustomization.yaml
 │   │   ├── staging/                  # Stub README pour pré-prod (HPA, Ingress, etc.)
@@ -207,6 +221,8 @@ nba_predictor/
 │   └── airflow-postgres.yaml         # Postgres dédié (envFrom: secretRef SealedSecret)
 ├── dags/                             # DAGs Airflow
 │   └── nba_orchestration.py          # Appel quotidien GET /api/nba/predict
+├── scripts/
+│   └── load-test.sh                  # V4.4 : 50 workers x 60s pour démo HPA
 ├── airflow-values.yaml               # Values Helm (LocalExecutor, metadataSecretName)
 ├── tests/                            # Suite pytest
 │   ├── conftest.py                   # cwd → nba-api/, sys.path injecté
@@ -303,7 +319,7 @@ Exposées sur `/metrics`, scrapées toutes les 15s par Prometheus via le Service
 
 ---
 
-## 6. Sécurité (Vague 4)
+## 6. Sécurité et résilience (Vague 4)
 
 ### 6.1 Image distroless (V4.2)
 
@@ -479,6 +495,146 @@ CVE-2025-62727  # starlette 0.41.3 → 0.49.1 (demande fastapi >=0.117)
 **Règle absolue** : pas de ligne dans `.trivyignore` sans commentaire `Revisit by:`. Évite l'accumulation silencieuse de dette CVE.
 
 **Installation Trivy** : on l'installe directement via le dépôt apt officiel d'Aqua (pas l'action `aquasecurity/trivy-action` qui a connu 4 incidents — versions inexistantes, deps cassées, install.sh exit 1). Stable et auditable.
+
+### 6.5 HorizontalPodAutoscaler + metrics-server (V4.4)
+
+**Objectif** : adapter automatiquement le nombre de replicas du backend selon la charge CPU.
+
+**Prérequis : metrics-server**
+```bash
+make metrics-server-install
+# = kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/.../components.yaml
+#   + patch --kubelet-insecure-tls (kind utilise des certs self-signed)
+```
+
+Sans metrics-server, le HPA reste à `<unknown>` et ne scale jamais. `kubectl top nodes / pods` est aussi indisponible.
+
+**Prérequis : `resources` sur le Deployment**
+
+Le HPA calcule un pourcentage par rapport aux `requests`. Sans `requests`, pas de pourcentage, pas de scale. Dans `k8s/base/backend-deployment.yaml` :
+```yaml
+resources:
+  requests:
+    cpu: "100m"      # 0.1 CPU = base de calcul %CPU pour HPA
+    memory: "256Mi"
+  limits:
+    cpu: "500m"      # hard cap = 5x requests, pas de noisy neighbor
+    memory: "512Mi"
+```
+
+Valeurs calibrées après mesure (`kubectl top pods` à l'idle : ~3m CPU, ~145Mi RAM).
+
+**HPA configuration**
+
+```yaml
+# k8s/base/backend-hpa.yaml
+apiVersion: autoscaling/v2
+spec:
+  minReplicas: 2     # HA : 1 crash != coupure
+  maxReplicas: 5     # limite capacité worker kind
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70   # trigger à 70% des requests (=70m)
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30   # rapide
+      policies: [{ type: Pods, value: 2, periodSeconds: 30 }]
+    scaleDown:
+      stabilizationWindowSeconds: 300  # lent (anti-yo-yo)
+      policies: [{ type: Pods, value: 1, periodSeconds: 60 }]
+```
+
+**Démonstration scale-up** (`make load-test` = 50 workers curl × 60s) :
+
+| Time | CPU % | Replicas | Événement HPA |
+|---|---|---|---|
+| T+0s (idle) | 3% | 2 | - |
+| T+22s | 86% | 2 | >70% threshold |
+| T+38s | 97% | **2 → 3** | **scale-up effectif** |
+| T+48s | 82% | 3 | stabilisé |
+| T+70s (charge off) | 14% | 3 | attente stabilizationWindowSeconds=300 avant -1 |
+
+### 6.6 Ingress + PodDisruptionBudgets (V4.5)
+
+**Objectif** : remplacer le NodePort externe par un vrai Ingress (pattern production-like) + garantir la disponibilité pendant les drains volontaires.
+
+#### Ingress nginx (ingress-nginx)
+
+**Prérequis** : `k8s/kind-config.yaml` doit mapper les ports 80/443 sur l'hôte ET poser le label `ingress-ready=true` sur le control-plane :
+```yaml
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - { containerPort: 80, hostPort: 80, protocol: TCP }
+      - { containerPort: 443, hostPort: 443, protocol: TCP }
+```
+
+**Install via manifest "kind-friendly" officiel** :
+```bash
+make ingress-install
+# = kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/
+#     controller-v1.11.3/deploy/static/provider/kind/deploy.yaml
+```
+
+Le manifest configure le controller en `hostPort: 80/443` sur le node labellé `ingress-ready=true`.
+
+**Manifest Ingress** (`k8s/base/nba-ingress.yaml`) :
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nba
+  namespace: nba
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: nba.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nba-frontend-svc
+                port:
+                  number: 80
+```
+
+Note : `/api/*` continue d'être reverse-proxy par nginx frontend vers le backend (pattern conservé depuis V3, validé). Pas besoin d'une seconde rule Ingress.
+
+**Résolution DNS `nba.localhost`** :
+- Linux/macOS : `echo "127.0.0.1 nba.localhost" | sudo tee -a /etc/hosts`
+- Windows : éditer `C:\Windows\System32\drivers\etc\hosts` (admin requis)
+- Test sans hosts : `curl -H "Host: nba.localhost" http://localhost/...` ou `curl --resolve "nba.localhost:80:127.0.0.1" http://nba.localhost/...`
+
+**Suppression du NodePort frontend** : le frontend repasse en ClusterIP. L'overlay `k8s/overlays/dev/frontend-nodeport.yaml` est supprimé.
+
+#### PodDisruptionBudgets
+
+**Objectif** : pendant un drain volontaire (`kubectl drain node`, upgrade nodes, autoscaler cluster down), garantir un minimum de replicas Ready.
+
+**Backend** (`k8s/base/backend-pdb.yaml`) : `minAvailable: 1` (compatible avec HPA min=2 — 1 pod peut tomber, 1 reste up).
+
+**Frontend** (`k8s/base/frontend-pdb.yaml`) : `minAvailable: 1`. **Limite assumée** : avec `replicas: 1` et `minAvailable: 1`, le pod est non-évictable lors d'un drain volontaire. Acceptable pour ce projet (downtime upgrade tolérable). En prod : `replicas: 2` + `maxUnavailable: 1`.
+
+État observé après déploiement :
+```
+NAME                              MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS
+nba-backend                       1               N/A               1   ← 2 replicas, 1 peut tomber
+nba-frontend                      1               N/A               0   ← 1 replica, 0 peut tomber
+```
+
+**Limite des PDB** : ils ne protègent que des disruptions **volontaires** (drain API). Pour les disruptions involontaires (crash pod, OOMKill, node down), c'est `replicas` + `readinessProbe` qui jouent.
 
 ---
 
@@ -711,6 +867,41 @@ Le chart Airflow demande un PVC ReadWriteMany pour les logs (4 pods qui écriven
 **Décision** : installer Trivy via le dépôt apt officiel d'Aqua dans le workflow `docker.yml`.
 
 **Justification** : 4 lignes shell, stable, auditable, indépendant des releases de l'action. Mantra : « plus important qu'un outil parfait, c'est un outil fonctionnel ».
+
+---
+
+### ADR-9 : HPA CPU-based plutôt que custom metrics (V4.4)
+
+**Contexte** : autoscaler le backend selon la charge réelle.
+
+**Options** :
+- HPA basé sur CPU (metrics-server, simple)
+- HPA basé sur custom metric `nba_api_requests_total` (Prometheus Adapter, plus précis pour ML)
+- KEDA (event-driven, overkill)
+
+**Décision** : **HPA CPU-based** avec threshold 70%.
+
+**Justification** : suffisant pour ce projet (backend FastAPI sync, le CPU est bien corrélé au QPS sklearn). Le custom metric demande Prometheus Adapter (encore un composant à maintenir) sans gain mesurable ici. KEDA pertinent pour des workloads event-driven (Kafka, RabbitMQ), pas pour une API REST.
+
+Calibration : `requests: 100m` calibré après mesure (idle ~3m), threshold 70% = trigger à 70m utilisés (juste au-dessus de la charge typique 1-req/s). Sous load test 50 workers, le pod sature à ~100% des requests, déclenche scale-up jusqu'à `maxReplicas: 5`.
+
+---
+
+### ADR-10 : Ingress nginx + single entry point (V4.5) plutôt que Service LoadBalancer
+
+**Contexte** : exposer le frontend NBA depuis l'extérieur du cluster de manière production-like.
+
+**Options** :
+- NodePort 30081 (état V4.3-V4.4)
+- Service `type: LoadBalancer` (nécessite MetalLB ou un LB cloud)
+- **Ingress nginx** (chart kubernetes/ingress-nginx, kind-friendly)
+- Traefik Ingress
+
+**Décision** : **Ingress nginx** (V4.5) avec port mapping kind 80/443 sur l'hôte.
+
+**Justification** : Ingress = abstraction L7 standard Kubernetes. ingress-nginx est le contrôleur de référence (le plus déployé en prod). Le manifest "kind-friendly" officiel évite MetalLB. Pattern "single entry point" plus représentatif d'une vraie prod (un Ingress devant N services, TLS centralisé, WAF, rate-limiting).
+
+**Trade-off** : demande de gérer la résolution DNS `nba.localhost` côté host (entrée `/etc/hosts`), accepté pour ce contexte local. En prod, ce serait une vraie zone DNS pointant vers le LB cloud.
 
 ---
 

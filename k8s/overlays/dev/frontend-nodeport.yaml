@@ -1,7 +1,0 @@
-# Expose le frontend en NodePort 30081 comme fallback à port-forward.
-- op: replace
-  path: /spec/type
-  value: NodePort
-- op: add
-  path: /spec/ports/0/nodePort
-  value: 30081

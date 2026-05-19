@@ -7,19 +7,21 @@
 #   nodeSelector / anti-affinity sans complexifier le setup.
 #
 # Port mapping (extraPortMappings) :
-#   - 30081 (NodePort frontend NBA) → localhost:30081
-#   Permet 'curl localhost:30081/api/nba/predict?...' sans port-forward.
-#   Le frontend nginx fait le reverse-proxy /api/* vers le backend (ClusterIP).
-#   Les autres services (Airflow UI, Grafana) restent accessibles via
-#   'make port-forward-airflow' / 'make port-forward-grafana'.
+#   - 80  -> nginx-ingress controller (host: nba.localhost)
+#   - 443 -> idem (TLS, prepare pour cert-manager futur)
+#   Permet 'curl http://nba.localhost/api/nba/predict?...' (resolution locale
+#   via /etc/hosts ou WSL host file ; nba.localhost = 127.0.0.1 par convention).
+#   L'ingress-nginx controller route ensuite vers nba-frontend-svc (ClusterIP).
 #
-# Pourquoi pas de NodePort backend (V4.3) : avec Calico + NetworkPolicies,
-# le SNAT WSL/Docker Desktop masque l'IP source du client externe (l'IP
-# vue par Calico n'est pas dans le subnet docker bridge), donc un ipBlock
-# cible est fragile. On adopte le pattern "single entry point" via nginx,
-# plus realiste de toute facon (en prod ce serait un Ingress controller).
+# Le control-plane porte le label `ingress-ready=true` requis par le chart
+# ingress-nginx pour scheduler le controller (nodeSelector du chart).
+#
+# Historique :
+#   V4.3 : 30081 NodePort frontend (remplace par Ingress en V4.5)
+#   V4.5 : single entry point via Ingress (pattern production-like)
 #
 # Doc kind : https://kind.sigs.k8s.io/docs/user/configuration/
+# Doc ingress-nginx + kind : https://kind.sigs.k8s.io/docs/user/ingress/
 
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -37,8 +39,18 @@ networking:
 
 nodes:
   - role: control-plane
+    kubeadmConfigPatches:
+      # Label requis par le chart ingress-nginx (nodeSelector ingress-ready=true)
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
     extraPortMappings:
-      - containerPort: 30081
-        hostPort: 30081
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
         protocol: TCP
   - role: worker

@@ -31,6 +31,12 @@ resources:
   # V4.4 : HorizontalPodAutoscaler (CPU-based, min=2 max=5, threshold 70%).
   # Necessite metrics-server installe (make metrics-server-install).
   - backend-hpa.yaml
+  # V4.5 : Ingress + PodDisruptionBudgets.
+  # Necessite ingress-nginx controller installe (make ingress-install) + resolution
+  # DNS de nba.localhost vers 127.0.0.1 (cf. nba-ingress.yaml).
+  - nba-ingress.yaml
+  - backend-pdb.yaml
+  - frontend-pdb.yaml
 
 labels:
   - includeSelectors: true

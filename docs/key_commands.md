@@ -17,6 +17,8 @@
 - [Vague 4.1 — SealedSecrets](#vague-41--sealedsecrets)
 - [Vague 4.2 — Dockerfile distroless + Trivy bloquant](#vague-42--dockerfile-distroless--trivy-bloquant)
 - [Vague 4.3 — NetworkPolicies + Calico](#vague-43--networkpolicies--calico)
+- [Vague 4.4 — HPA + metrics-server](#vague-44--hpa--metrics-server)
+- [Vague 4.5 — Ingress + PDB](#vague-45--ingress--pdb)
 - [Opérations quotidiennes](#opérations-quotidiennes)
 - [Dépannage](#dépannage)
 
@@ -486,6 +488,145 @@ kubectl logs -n calico-system -l k8s-app=calico-node --tail=50 | grep -iE "deny|
 
 ---
 
+## Vague 4.4 — HPA + metrics-server
+
+### Installer metrics-server
+
+```bash
+make metrics-server-install
+# Patch --kubelet-insecure-tls obligatoire sur kind (certs self-signed)
+# kubectl top nodes / pods devient fonctionnel
+```
+
+### Tester que les metrics remontent
+
+```bash
+kubectl top nodes
+# Doit afficher CPU(cores) et MEMORY(bytes), pas "metrics not available yet"
+
+kubectl top pods -n nba
+# nba-backend-xxx  3m  145Mi
+```
+
+### Observer le HPA (idle)
+
+```bash
+kubectl get hpa -n nba
+# nba-backend  Deployment/nba-backend  cpu: 3%/70%  2  5  2  ...
+
+# Détail complet
+kubectl describe hpa nba-backend -n nba
+```
+
+### Lancer la démo de scale-up sous charge
+
+```bash
+make load-test
+# 50 workers curl en parallèle pendant 60s sur /api/nba/predict
+
+# Dans un autre terminal :
+kubectl get hpa,pods -n nba -w
+```
+
+**Résultat attendu** :
+```
+[T+0s ] cpu: 3%/70%   2 replicas (idle)
+[T+22s] cpu: 86%/70%  2 replicas (au-dessus threshold)
+[T+38s] cpu: 97%/70%  2 → 3 replicas (SCALE-UP)
+[T+48s] cpu: 82%/70%  3 replicas (stabilisé)
+[T+70s] cpu: 14%/70%  3 replicas (attente 300s stabilizationWindow)
+```
+
+### Forcer un scale-down rapide (debug)
+
+```bash
+# Patch temporaire pour réduire stabilizationWindowSeconds
+kubectl patch hpa nba-backend -n nba --type=merge -p '{"spec":{"behavior":{"scaleDown":{"stabilizationWindowSeconds":30}}}}'
+
+# Re-apply pour revenir à la valeur du manifest
+kubectl apply -k k8s/overlays/dev
+```
+
+---
+
+## Vague 4.5 — Ingress + PDB
+
+### Installer ingress-nginx (controller)
+
+```bash
+make ingress-install
+# = kubectl apply -f https://...ingress-nginx/controller-v1.11.3/.../kind/deploy.yaml
+# Le manifest "kind" configure hostPort 80/443 sur le node label ingress-ready=true
+```
+
+### Configurer la résolution DNS `nba.localhost`
+
+```bash
+# Linux / macOS
+echo "127.0.0.1 nba.localhost" | sudo tee -a /etc/hosts
+
+# Windows (PowerShell admin)
+Add-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value "127.0.0.1 nba.localhost"
+
+# Test
+ping nba.localhost   # doit répondre depuis 127.0.0.1
+```
+
+### Tester l'Ingress
+
+```bash
+# Avec résolution DNS (production)
+curl -sf "http://nba.localhost/api/nba/predict?TOV=2&GP=82&MIN=28&PTS=14&FGM=5&FGA=11&FGP=0.45&PM=2&PA=5&PAP=0.40&FTM=2&FTA=3&FTP=0.67&OREB=1&DREB=4&REB=5&AST=4&STL=1&BLK=0.5"
+
+# Sans modifier /etc/hosts (utile CI ou debug)
+curl -sf --resolve "nba.localhost:80:127.0.0.1" "http://nba.localhost/api/nba/predict?..."
+
+# Ou avec Host header
+curl -sf -H "Host: nba.localhost" "http://localhost/api/nba/predict?..."
+```
+
+### Vérifier l'état des PodDisruptionBudgets
+
+```bash
+kubectl get pdb -n nba
+# nba-backend    1  N/A  1  ← 2 replicas, 1 peut tomber lors d'un drain
+# nba-frontend   1  N/A  0  ← 1 replica seul, 0 peut tomber (non-évictable)
+```
+
+### Simuler un drain de node (test PDB)
+
+```bash
+# Drain volontaire d'un node
+kubectl drain nba-predictor-worker --ignore-daemonsets --delete-emptydir-data
+
+# Le backend (replicas=2, minAvailable=1) va voir un pod migrer sur l'autre node
+# Le frontend (replicas=1, minAvailable=1) va BLOQUER le drain (non-évictable)
+# C'est volontaire et documenté.
+
+# Annuler le drain
+kubectl uncordon nba-predictor-worker
+```
+
+### Recréation cluster pour V4.5 (port mapping change)
+
+```bash
+# Le port mapping 30081 -> 80/443 demande une recréation
+make cluster-down
+make cluster-up        # nouveau cluster avec ports 80/443 + label ingress-ready=true
+make sealed-secrets-install
+make seal-secrets      # IMPORTANT : nouvelle master key, regen obligatoire
+make metrics-server-install
+make ingress-install
+make build
+make monitoring
+make nba
+make airflow
+# OU plus simplement :
+make all   # enchaîne tout dans le bon ordre
+```
+
+---
+
 ## Opérations quotidiennes
 
 ### Voir le status global
@@ -541,15 +682,17 @@ kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- \
 ### Tester les routes API en local
 
 ```bash
-# Prédiction par stats individuelles
-curl -sf "http://localhost:30081/api/nba/predict?TOV=2&GP=82&MIN=28&PTS=14&FGM=5&FGA=11&FGP=0.45&PM=2&PA=5&PAP=0.40&FTM=2&FTA=3&FTP=0.67&OREB=1&DREB=4&REB=5&AST=4&STL=1&BLK=0.5"
+# Prédiction par stats individuelles (via Ingress V4.5)
+curl -sf "http://nba.localhost/api/nba/predict?TOV=2&GP=82&MIN=28&PTS=14&FGM=5&FGA=11&FGP=0.45&PM=2&PA=5&PAP=0.40&FTM=2&FTA=3&FTP=0.67&OREB=1&DREB=4&REB=5&AST=4&STL=1&BLK=0.5"
 
 # Prédiction par nom
-curl -sf "http://localhost:30081/api/nba/info?Name=Brandon%20Ingram"
+curl -sf "http://nba.localhost/api/nba/info?Name=Brandon%20Ingram"
 
 # Doc OpenAPI Swagger
-open http://localhost:30081/docs   # macOS
-start http://localhost:30081/docs  # Windows
+open http://nba.localhost/docs    # macOS
+start http://nba.localhost/docs   # Windows
+
+# Pré-requis : '127.0.0.1 nba.localhost' dans /etc/hosts (ou systemd-resolved récent)
 ```
 
 ### Lancer les tests pytest
@@ -628,13 +771,46 @@ kubectl get pvc -n airflow
 helm upgrade airflow apache-airflow/airflow -n airflow -f airflow-values.yaml
 ```
 
-### Smoke test 30080 échoue (timeout)
+### Smoke test 30080 ou 30081 échoue (timeout)
 
-Le NodePort 30080 a été supprimé en V4.3 (backend en ClusterIP uniquement).
+Le NodePort 30080 a été supprimé en V4.3, et 30081 en V4.5 (Ingress).
 
 ```bash
-# Solution : passer par le frontend 30081 + /api/*
-curl -sf "http://localhost:30081/api/nba/predict?TOV=2&GP=82&..."
+# Solution V4.5 : tout passe par l'Ingress nba.localhost
+curl -sf "http://nba.localhost/api/nba/predict?TOV=2&GP=82&..."
+
+# Si nba.localhost ne résout pas → ajouter à /etc/hosts
+echo "127.0.0.1 nba.localhost" | sudo tee -a /etc/hosts
+
+# Ou tester sans modifier hosts
+curl -sf --resolve "nba.localhost:80:127.0.0.1" "http://nba.localhost/api/nba/predict?..."
+```
+
+### Ingress retourne 404
+
+```bash
+# Vérifier que le controller est Ready
+kubectl get pods -n ingress-nginx
+# ingress-nginx-controller-xxx  1/1  Running
+
+# Vérifier l'Ingress
+kubectl get ingress -n nba
+# ADDRESS doit être 'localhost' (sinon le controller n'est pas reachable)
+
+# Vérifier les logs du controller
+kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=30
+```
+
+### HPA reste à `<unknown>/70%`
+
+```bash
+# Cause #1 : metrics-server pas installé ou en CrashLoop
+kubectl get deployment metrics-server -n kube-system
+kubectl logs -n kube-system -l k8s-app=metrics-server --tail=20
+
+# Cause #2 : pas de 'resources.requests' sur le Deployment
+kubectl get deployment nba-backend -n nba -o jsonpath='{.spec.template.spec.containers[0].resources}'
+# Doit afficher requests + limits
 ```
 
 ### Prometheus ne scrape pas le backend

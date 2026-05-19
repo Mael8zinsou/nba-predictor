@@ -43,8 +43,13 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # Frontend expose en NodePort : on autorise l'ingress depuis n'importe ou
-    # (la restriction se fait au niveau du reseau hote / du firewall).
+    # Frontend = point d'entree public, on accepte l'ingress depuis :
+    #   - ingress-nginx controller (namespace 'ingress-nginx', V4.5)
+    #   - port-forward kubectl (depuis APIserver, IPs imprevisibles)
+    #   - tests locaux (curl depuis intra-cluster)
+    # Pour ce cas precis, on laisse ouvert (- {}) car le frontend EST
+    # l'unique entry point public. La protection vient des couches
+    # superieures (ingress-nginx WAF / cert-manager TLS / Cloud LB en prod).
     - {}
 ---
 apiVersion: networking.k8s.io/v1
