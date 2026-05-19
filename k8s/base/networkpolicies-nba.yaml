@@ -1,0 +1,90 @@
+# NetworkPolicies du namespace 'nba' (V4.3 — Calico CNI requis).
+#
+# Strategie zero-trust :
+#   1. default-deny ingress sur tous les pods du namespace
+#   2. allow explicit pour chaque flux necessaire
+#
+# Flux autorises en INGRESS :
+#   - frontend (Nginx) accessible depuis n'importe quel client (NodePort 30081)
+#   - backend (FastAPI) accessible UNIQUEMENT depuis :
+#     - le frontend du meme namespace (reverse-proxy /api/*)
+#     - Prometheus (namespace 'monitoring', label role=monitoring) pour scrape /metrics
+#     - le DAG Airflow (namespace 'airflow', label role=orchestration)
+#
+# Egress non filtre : on garde l'egress libre pour ce projet. Resserrer
+# l'egress (limiter le DNS + le cross-namespace airflow-postgres) sera V4.3bis.
+#
+# Test isolation :
+#   kubectl run tmp --image=curlimages/curl --rm -it --restart=Never -- \
+#     curl -m 3 http://nba-backend-svc.nba.svc.cluster.local:8080/
+#   -> doit timeout sans la NP allow-from-trusted
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: nba
+spec:
+  # podSelector vide = matche TOUS les pods du namespace.
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  # Pas de regles 'ingress:' => deny par defaut.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-ingress
+  namespace: nba
+spec:
+  podSelector:
+    matchLabels:
+      app: nba-frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    # Frontend expose en NodePort : on autorise l'ingress depuis n'importe ou
+    # (la restriction se fait au niveau du reseau hote / du firewall).
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-ingress
+  namespace: nba
+spec:
+  podSelector:
+    matchLabels:
+      app: nba-backend
+  policyTypes:
+    - Ingress
+  ingress:
+    # 1. Frontend du meme namespace (reverse-proxy /api/*)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: nba-frontend
+      ports:
+        - protocol: TCP
+          port: 8080
+    # 2. Prometheus du namespace 'monitoring' (scrape /metrics)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              role: monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
+    # 3. DAG Airflow (scheduler / worker / triggerer du namespace 'airflow')
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              role: orchestration
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Pas d'ipBlock pour le trafic externe : depuis V4.3, le backend n'est
+    # plus expose en NodePort. Tout client externe doit passer par le
+    # frontend nginx (NodePort 30081), qui fait le reverse-proxy /api/*
+    # vers nba-backend-svc (ClusterIP) -- flow autorise par la regle (1)
+    # ci-dessus (podSelector app=nba-frontend).

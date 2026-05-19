@@ -23,6 +23,11 @@ resources:
   - backend-service.yaml
   - frontend-deployment.yaml
   - frontend-service.yaml
+  # V4.3 : NetworkPolicies du namespace nba (default-deny + allows minimaux).
+  # Les NP d'airflow et monitoring sont appliquees separement (cf. Makefile,
+  # cibles 'airflow' et 'monitoring') car leurs namespaces sont crees par
+  # Helm en dehors de Kustomize.
+  - networkpolicies-nba.yaml
 
 labels:
   - includeSelectors: true

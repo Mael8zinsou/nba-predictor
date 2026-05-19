@@ -1,4 +1,14 @@
+# Namespace de l'application NBA.
+# Labels :
+#   - kubernetes.io/metadata.name : auto-set par K8s sur tout namespace,
+#     utile pour le ciblage par namespaceSelector dans les NetworkPolicies.
+#   - role : label custom V4.3 utilise par les NetworkPolicies des autres
+#     namespaces pour autoriser ou refuser le trafic cross-namespace
+#     (cf. k8s/base/networkpolicies-*.yaml).
 apiVersion: v1
 kind: Namespace
 metadata:
   name: nba
+  labels:
+    app.kubernetes.io/part-of: nba-predictor
+    role: app

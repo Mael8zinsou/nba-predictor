@@ -7,11 +7,17 @@
 #   nodeSelector / anti-affinity sans complexifier le setup.
 #
 # Port mapping (extraPortMappings) :
-#   - 30080 (NodePort backend NBA) → localhost:30080
 #   - 30081 (NodePort frontend NBA) → localhost:30081
-#   Permet 'curl localhost:30080/api/nba/predict?...' sans port-forward.
+#   Permet 'curl localhost:30081/api/nba/predict?...' sans port-forward.
+#   Le frontend nginx fait le reverse-proxy /api/* vers le backend (ClusterIP).
 #   Les autres services (Airflow UI, Grafana) restent accessibles via
 #   'make port-forward-airflow' / 'make port-forward-grafana'.
+#
+# Pourquoi pas de NodePort backend (V4.3) : avec Calico + NetworkPolicies,
+# le SNAT WSL/Docker Desktop masque l'IP source du client externe (l'IP
+# vue par Calico n'est pas dans le subnet docker bridge), donc un ipBlock
+# cible est fragile. On adopte le pattern "single entry point" via nginx,
+# plus realiste de toute facon (en prod ce serait un Ingress controller).
 #
 # Doc kind : https://kind.sigs.k8s.io/docs/user/configuration/
 
@@ -19,12 +25,19 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: nba-predictor
 
+# V4.3 : on désactive le CNI par défaut (kindnet) pour installer Calico.
+# Raison : kindnet ne supporte pas les NetworkPolicies (deny par défaut +
+# allows ciblés). Calico installe son propre CNI + son controller de policies.
+# Sans cette ligne, les NetworkPolicies sont déployées mais ignorées.
+# Le cluster reste NotReady après création tant que Calico n'est pas installé
+# (voir make cluster-up qui enchaine kind create + install Calico).
+networking:
+  disableDefaultCNI: true
+  podSubnet: "192.168.0.0/16"  # Subnet par defaut de Calico (sinon overlap)
+
 nodes:
   - role: control-plane
     extraPortMappings:
-      - containerPort: 30080
-        hostPort: 30080
-        protocol: TCP
       - containerPort: 30081
         hostPort: 30081
         protocol: TCP

@@ -1,0 +1,84 @@
+# NetworkPolicies du namespace 'airflow' (V4.3 — Calico CNI requis).
+#
+# Strategie zero-trust avec exception pragmatique : Airflow a un graphe de
+# communications interne complexe (scheduler <-> postgres, api-server <->
+# postgres, triggerer <-> postgres, dag-processor <-> postgres, statsd qui
+# recoit des UDP, etc.) qu'on ne veut pas modeliser ici en detail (Helm
+# upgrade casserait le tout si on ajoute / renomme un composant).
+#
+# Approche choisie :
+#   1. default-deny ingress
+#   2. allow-all INTRA-namespace (n'importe quel pod airflow peut parler a
+#      n'importe quel autre pod airflow)
+#   3. allow ingress depuis 'role: monitoring' (Prometheus scrape statsd)
+#   4. Pas d'allow cross-namespace pour postgres (sa cle est planquee dans
+#      le SealedSecret, mais quand meme : aucun pod d'un autre ns ne
+#      peut le requeter).
+#
+# Egress : non filtre (DAG nba_orchestration doit pouvoir appeler nba-backend
+# sur le namespace 'nba' ; sans filtrage egress, c'est OK). Affiner egress
+# = V4.3bis.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: airflow
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace
+  namespace: airflow
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: airflow
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-airflow-ui-ingress
+  namespace: airflow
+spec:
+  # Seul l'api-server est expose en port-forward / Ingress futur.
+  podSelector:
+    matchLabels:
+      component: api-server
+  policyTypes:
+    - Ingress
+  ingress:
+    # Acces externe via port-forward (kubectl) ou Ingress en V4.5.
+    # Kube-proxy SNAT le trafic local -> on accepte tout sur le port airflow.
+    - ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape-statsd
+  namespace: airflow
+spec:
+  podSelector:
+    matchLabels:
+      component: statsd
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              role: monitoring
+      ports:
+        - protocol: TCP
+          port: 9102  # statsd_exporter port HTTP /metrics

@@ -36,6 +36,11 @@ OVERLAY ?= dev
 # et vérifier que le control-plane devient Ready.
 KIND_NODE_IMAGE ?= kindest/node:v1.32.2@sha256:36187f6c542fa9b78d2d499de4c857249c5a0ac8cc2241bef2ccd92729a7a259
 
+# Version de Calico (CNI + NetworkPolicy controller). V3.28 supporte K8s 1.32.
+# Manifest "Tigera operator" : install plus simple qu'un Helm chart (1 manifest +
+# 1 CR Installation/APIServer). Mise a jour : tester d'abord en cluster jetable.
+CALICO_VERSION ?= v3.28.2
+
 # Couleurs pour les messages
 CYAN   := \033[36m
 GREEN  := \033[32m
@@ -44,6 +49,7 @@ RESET  := \033[0m
 
 .DEFAULT_GOAL := help
 .PHONY: help all cluster-up cluster-down build deploy nba airflow monitoring sync-dags \
+        calico-install network-policies \
         sealed-secrets-install seal-secrets apply-sealed-secrets \
         port-forward-app port-forward-airflow port-forward-grafana \
         logs-backend logs-frontend logs-airflow status destroy clean-images
@@ -67,7 +73,7 @@ all: cluster-up build sealed-secrets-install monitoring deploy airflow ## Déplo
 # Cluster kind (Kubernetes-in-Docker)
 # =============================================================================
 
-cluster-up: ## Crée le cluster kind 'nba-predictor' (1 control-plane + 1 worker)
+cluster-up: ## Crée le cluster kind 'nba-predictor' (1 control-plane + 1 worker) + installe Calico
 	@if kind get clusters 2>/dev/null | grep -q "^$(CLUSTER_NAME)$$"; then \
 		printf "$(GREEN)[OK] Cluster kind '$(CLUSTER_NAME)' deja existant.$(RESET)\n"; \
 	else \
@@ -76,9 +82,27 @@ cluster-up: ## Crée le cluster kind 'nba-predictor' (1 control-plane + 1 worker
 			printf "$(YELLOW)[!] Echec de creation du cluster. Voir messages ci-dessus.$(RESET)\n"; \
 			exit 1; \
 		}; \
-		printf "$(GREEN)[OK] Cluster cree.$(RESET)\n"; \
+		printf "$(GREEN)[OK] Cluster cree (CNI non installe, nodes NotReady).$(RESET)\n"; \
+		$(MAKE) --no-print-directory calico-install; \
 	fi
 	@kubectl cluster-info --context kind-$(CLUSTER_NAME)
+
+calico-install: ## Installe Calico (CNI + NetworkPolicy controller) via tigera-operator
+	@printf "$(CYAN)> Installation de Calico $(CALICO_VERSION) (tigera-operator)...$(RESET)\n"
+	@kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/$(CALICO_VERSION)/manifests/tigera-operator.yaml 2>&1 | grep -v "already exists" || true
+	@printf "$(CYAN)> Attente du tigera-operator Ready...$(RESET)\n"
+	@kubectl wait --for=condition=Available deployment/tigera-operator -n tigera-operator --timeout=120s
+	@printf "$(CYAN)> Application des CR Calico (Installation + APIServer)...$(RESET)\n"
+	@kubectl apply -f k8s/calico-installation.yaml
+	@printf "$(CYAN)> Attente que les nodes deviennent Ready (calico-node DaemonSet)...$(RESET)\n"
+	@kubectl wait --for=condition=Ready nodes --all --timeout=180s
+	@printf "$(GREEN)[OK] Calico installe, NetworkPolicies effectives.$(RESET)\n"
+
+network-policies: ## Applique les NetworkPolicies airflow + monitoring (la NP nba est dans Kustomize)
+	@printf "$(CYAN)> Application des NetworkPolicies (airflow + monitoring)...$(RESET)\n"
+	@kubectl get namespace airflow >/dev/null 2>&1 && kubectl apply -f k8s/base/networkpolicies-airflow.yaml || printf "$(YELLOW)[!] Namespace airflow absent, NP non appliquee.$(RESET)\n"
+	@kubectl get namespace monitoring >/dev/null 2>&1 && kubectl apply -f k8s/base/networkpolicies-monitoring.yaml || printf "$(YELLOW)[!] Namespace monitoring absent, NP non appliquee.$(RESET)\n"
+	@printf "$(GREEN)[OK] NetworkPolicies appliquees.$(RESET)\n"
 
 cluster-down: ## Supprime complètement le cluster kind
 	@printf "$(YELLOW)[!] Suppression du cluster kind '$(CLUSTER_NAME)'...$(RESET)\n"
@@ -119,7 +143,7 @@ nba: ## Déploie/met à jour l'app NBA via Kustomize (overlay = OVERLAY, défaut
 # Monitoring (Prometheus + Grafana via Helm)
 # =============================================================================
 
-monitoring: ## Déploie kube-prometheus-stack (Prometheus + Grafana) via Helm + ServiceMonitor NBA
+monitoring: ## Déploie kube-prometheus-stack (Prometheus + Grafana) via Helm + ServiceMonitor NBA + NetworkPolicies
 	@printf "$(CYAN)> Installation/upgrade de kube-prometheus-stack...$(RESET)\n"
 	@helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
 	@helm repo update >/dev/null
@@ -128,7 +152,11 @@ monitoring: ## Déploie kube-prometheus-stack (Prometheus + Grafana) via Helm + 
 		--wait --timeout 5m
 	@printf "$(CYAN)> Application du ServiceMonitor pour le backend NBA...$(RESET)\n"
 	@kubectl apply -f k8s/base/backend-servicemonitor.yaml
-	@printf "$(GREEN)[OK] Stack monitoring deployee + ServiceMonitor NBA actif.$(RESET)\n"
+	@printf "$(CYAN)> Labelisation du namespace monitoring (role=monitoring) pour les NetworkPolicies...$(RESET)\n"
+	@kubectl label namespace monitoring role=monitoring --overwrite >/dev/null
+	@printf "$(CYAN)> Application des NetworkPolicies monitoring...$(RESET)\n"
+	@kubectl apply -f k8s/base/networkpolicies-monitoring.yaml
+	@printf "$(GREEN)[OK] Stack monitoring deployee + ServiceMonitor NBA actif + NP appliquees.$(RESET)\n"
 	@printf "  Grafana : admin / prom-operator (voir kubectl get secret -n monitoring kube-prom-grafana)\n"
 
 # =============================================================================
@@ -180,9 +208,11 @@ apply-sealed-secrets: ## Applique les SealedSecret committes (controller deja in
 # Airflow (Postgres dédié + Helm chart officiel)
 # =============================================================================
 
-airflow: apply-sealed-secrets ## Déploie Postgres dédié puis Airflow (Helm) avec attente Ready
+airflow: apply-sealed-secrets ## Déploie Postgres dédié puis Airflow (Helm) avec attente Ready + NetworkPolicies
 	@printf "$(CYAN)> Creation du namespace airflow si necessaire...$(RESET)\n"
 	@kubectl get namespace airflow >/dev/null 2>&1 || kubectl create namespace airflow
+	@printf "$(CYAN)> Labelisation du namespace airflow (role=orchestration) pour les NetworkPolicies...$(RESET)\n"
+	@kubectl label namespace airflow role=orchestration --overwrite >/dev/null
 	@printf "$(CYAN)> Deploiement de PostgreSQL dedie a Airflow...$(RESET)\n"
 	@kubectl apply -f k8s/airflow-postgres.yaml
 	@kubectl wait --for=condition=Ready pod -l app=airflow-postgres -n airflow --timeout=120s
@@ -202,7 +232,9 @@ airflow: apply-sealed-secrets ## Déploie Postgres dédié puis Airflow (Helm) a
 	@kubectl wait --for=condition=Ready pod -l component=api-server -n airflow --timeout=10m
 	@kubectl wait --for=condition=Ready pod -l component=scheduler -n airflow --timeout=5m
 	@$(MAKE) --no-print-directory sync-dags
-	@printf "$(GREEN)[OK] Airflow deploye.$(RESET)\n"
+	@printf "$(CYAN)> Application des NetworkPolicies airflow...$(RESET)\n"
+	@kubectl apply -f k8s/base/networkpolicies-airflow.yaml
+	@printf "$(GREEN)[OK] Airflow deploye + NP appliquees.$(RESET)\n"
 	@printf "  UI : admin/admin - make port-forward-airflow puis http://localhost:8081\n"
 
 sync-dags: ## Synchronise dags/ local vers le PVC Airflow (via kubectl cp dans le scheduler)

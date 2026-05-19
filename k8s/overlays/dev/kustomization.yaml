@@ -3,8 +3,13 @@
 # Spécificités :
 #   - imagePullPolicy: Never (images chargées via `kind load docker-image`,
 #     pas disponibles dans une registry)
-#   - Services frontend/backend exposés en NodePort 30080/30081, mappés
-#     directement sur localhost par kind (cf. k8s/kind-config.yaml)
+#   - Service frontend exposé en NodePort 30081, mappé directement sur
+#     localhost par kind (cf. k8s/kind-config.yaml)
+#   - Backend volontairement en ClusterIP : depuis V4.3 (NetworkPolicies +
+#     Calico), un NodePort backend serait quand meme bloque par les NP
+#     car le SNAT WSL/Docker Desktop masque l'IP source du client externe.
+#     Tout passe donc par le frontend nginx (30081/api/* -> backend interne).
+#     Pattern "single entry point" plus realiste de toute facon.
 #
 # Préfixe optionnel : aucun pour dev — les ressources gardent leur nom
 # d'origine pour matcher les noms attendus par le DAG Airflow et le nginx.conf.
@@ -20,11 +25,6 @@ patches:
     target:
       kind: Deployment
       labelSelector: app.kubernetes.io/part-of=nba-predictor
-
-  - path: backend-nodeport.yaml
-    target:
-      kind: Service
-      name: nba-backend-svc
 
   - path: frontend-nodeport.yaml
     target:

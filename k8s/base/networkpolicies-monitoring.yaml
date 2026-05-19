@@ -1,0 +1,69 @@
+# NetworkPolicies du namespace 'monitoring' (V4.3 — Calico CNI requis).
+#
+# Strategie : default-deny + allow intra-namespace + allow Grafana port-forward.
+# Prometheus reste libre d'EGRESS pour pouvoir scraper :
+#   - nba-backend dans le ns 'nba' (autorise par allow-backend-ingress)
+#   - airflow-statsd dans le ns 'airflow' (autorise par allow-prometheus-scrape-statsd)
+#   - kube-state-metrics + node-exporter intra-namespace
+#
+# Note : le namespace 'monitoring' doit porter le label `role: monitoring`
+# pour etre matche par les namespaceSelector des autres NP. C'est applique
+# dans le Makefile (cible 'monitoring') via kubectl label.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-ingress
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    # Acces externe via port-forward (kubectl) ou Ingress en V4.5.
+    - ports:
+        - protocol: TCP
+          port: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-ui-ingress
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 9090

@@ -43,15 +43,25 @@ jobs:
       - uses: actions/checkout@v4
 
       # Crée un cluster kind avec notre config (1 control-plane + 1 worker,
-      # port mapping 30080/30081). Utilise une image pinned cohérente avec
-      # ce qui est dans Makefile.
-      - name: Create kind cluster
+      # port mapping 30081 frontend uniquement). Le CNI par defaut est
+      # desactive (cf. kind-config.yaml) car on veut Calico pour les
+      # NetworkPolicies (V4.3). Tant que Calico n'est pas installe, les
+      # nodes restent NotReady -- d'ou wait_for_node: false ci-dessous.
+      - name: Create kind cluster (CNI disabled, waiting for Calico)
         uses: helm/kind-action@v1.14.0
         with:
           cluster_name: nba-predictor
           config: k8s/kind-config.yaml
           node_image: kindest/node:v1.32.2
           version: v0.27.0  # version de kind elle-même, alignée avec containerd 2.x du runner
+          wait: 0s  # ne pas attendre que les nodes soient Ready (sans CNI ils ne le seront jamais)
+
+      - name: Install Calico (CNI + NetworkPolicy controller)
+        run: |
+          kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/tigera-operator.yaml
+          kubectl wait --for=condition=Available deployment/tigera-operator -n tigera-operator --timeout=120s
+          kubectl apply -f k8s/calico-installation.yaml
+          kubectl wait --for=condition=Ready nodes --all --timeout=180s
 
       - name: Verify cluster is up
         run: |
@@ -91,12 +101,13 @@ jobs:
           kubectl wait --for=condition=Ready pod \
             -l app=nba-frontend -n nba --timeout=60s
 
-      # Smoke test : appeler /api/nba/predict via le NodePort mappé par kind
-      # (30080 = backend, voir kind-config.yaml).
-      - name: Smoke test /api/nba/predict
+      # Smoke tests via le NodePort frontend (30081) qui reverse-proxy /api/*
+      # vers le backend (V4.3 : backend en ClusterIP, isole par NetworkPolicies).
+      # Le frontend est expose en NodePort 30081, mappe sur localhost par kind.
+      - name: Smoke test /api/nba/predict (via frontend nginx)
         run: |
           # Requête de prédiction avec les mêmes params que le DAG Airflow
-          response=$(curl -sf "http://localhost:30080/api/nba/predict?\
+          response=$(curl -sf "http://localhost:30081/api/nba/predict?\
           TOV=2&GP=82&MIN=28&PTS=14&FGM=5&FGA=11&FGP=0.45&\
           PM=2&PA=5&PAP=0.40&FTM=2&FTA=3&FTP=0.67&\
           OREB=1&DREB=4&REB=5&AST=4&STL=1&BLK=0.5")
@@ -105,15 +116,19 @@ jobs:
           echo "$response" | grep -q '"prediction"' || { echo "Missing prediction"; exit 1; }
           echo "$response" | grep -q '"decision"' || { echo "Missing decision"; exit 1; }
 
-      - name: Smoke test /api/nba/info
+      - name: Smoke test /api/nba/info (via frontend nginx)
         run: |
-          response=$(curl -sf "http://localhost:30080/api/nba/info?Name=Brandon%20Ingram")
+          response=$(curl -sf "http://localhost:30081/api/nba/info?Name=Brandon%20Ingram")
           echo "Response: $response"
           echo "$response" | grep -q '"decision"' || { echo "Missing decision"; exit 1; }
 
-      - name: Smoke test /metrics
+      - name: Smoke test /metrics (via kubectl exec, route ops non publique)
         run: |
-          response=$(curl -sf http://localhost:30080/metrics)
+          # /metrics n'est pas reverse-proxy par nginx (volontaire : route Prometheus
+          # interne, scrapee via ServiceMonitor). On la teste directement dans un
+          # pod backend.
+          POD=$(kubectl get pod -n nba -l app=nba-backend -o jsonpath='{.items[0].metadata.name}')
+          response=$(kubectl exec -n nba "$POD" -- python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/metrics').read().decode())")
           echo "$response" | grep -q 'nba_api_requests_total' || { echo "Missing metric"; exit 1; }
 
       # Si quelque chose a foiré, on dump les logs pour diagnostic

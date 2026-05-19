@@ -55,6 +55,7 @@ L'architecture est cloisonnée par **3 namespaces Kubernetes** déployés sur un
 |---|---|---|
 | Conteneurisation | **Docker Desktop** | Isolation, comportement identique dev/prod, host des conteneurs kind |
 | Orchestration | **Kubernetes via [kind](https://kind.sigs.k8s.io/)** | Cluster local rapide, sans VM, conteneurs visibles dans Docker Desktop |
+| CNI / Network Policies | **[Calico](https://www.tigera.io/project-calico/)** (tigera-operator) | Remplace kindnet pour activer les NetworkPolicies (V4.3) |
 | Backend | **FastAPI** + scikit-learn | Performance, doc OpenAPI auto, intégration Prometheus native |
 | Frontend / Reverse proxy | **Nginx** | Statique performant, élimine les problèmes CORS |
 | Orchestration de tâches | **Apache Airflow** (Helm, LocalExecutor) | Standard pour DAGs, logs centralisés |
@@ -96,6 +97,7 @@ make status                  # État des 3 namespaces (nba, airflow, monitoring)
 
 # Accès aux UIs
 # Frontend NBA accessible directement (port mappé par kind) : http://localhost:30081
+# API NBA via le reverse-proxy nginx : http://localhost:30081/api/nba/predict?...
 make port-forward-airflow    # Airflow UI     → http://localhost:8081 (admin/admin)
 make port-forward-grafana    # Grafana        → http://localhost:3000 (admin/prom-operator)
 
@@ -166,7 +168,7 @@ nba_predictor/
 
 - **Workflow images avec kind** — `docker build` (dans Docker Desktop) puis `kind load docker-image` charge l'image dans le node containerd du cluster. Pas besoin de registry. La cible `make build` enchaîne les deux automatiquement.
 - **`imagePullPolicy: Never`** — volontaire, car les images sont chargées localement dans le cluster (pas dans une registry).
-- **Port mapping kind** — le cluster expose `localhost:30080` (backend) et `localhost:30081` (frontend) directement, sans port-forward.
+- **Port mapping kind** — depuis V4.3, seul le frontend est exposé sur `localhost:30081`. L'API est accessible via le reverse-proxy nginx (`localhost:30081/api/*` → backend ClusterIP). Le backend n'est plus directement accessible depuis l'hôte (isolation NetworkPolicies).
 - **Label `release: kube-prom`** — requis sur le ServiceMonitor pour que Prometheus le détecte.
 - **PostgreSQL d'Airflow déployé séparément** — décision motivée par les instabilités du subchart Postgres du chart Airflow officiel (cf. rapport §6).
 - **Secrets via Bitnami sealed-secrets (V4.1)** — password Postgres + URL SQLAlchemy Airflow chiffrés avec la clé publique du controller (committable dans `k8s/base/airflow-credentials-sealedsecret.yaml`, déchiffrement automatique côté cluster). Pour regénérer après rotation : `make seal-secrets` (nécessite `kubeseal` CLI, cf. [docs/PREREQUISITES.md](docs/PREREQUISITES.md)).
@@ -183,6 +185,7 @@ Ce projet est en évolution active vers un vrai showcase Data Engineering. Proch
 - [x] Tests unitaires (pytest) et d'intégration (kind)
 - [x] Dockerfile multi-stage distroless + ré-activation Trivy `--exit-code 1` HIGH/CRITICAL avec `.trivyignore` documenté (Vague 4.2)
 - [x] Secrets K8s via Bitnami sealed-secrets (password Postgres + URL SQLAlchemy Airflow chiffrés, controller dans `kube-system`) (Vague 4.1)
+- [x] NetworkPolicies zero-trust (default-deny + allows minimaux) + CNI Calico via tigera-operator (Vague 4.3)
 - [ ] Dashboards Grafana versionnés (provisioning via ConfigMap)
 - [ ] OpenTelemetry traces (DAG Airflow → API → modèle)
 - [ ] Pipeline d'entraînement reproductible (MLflow + DVC)

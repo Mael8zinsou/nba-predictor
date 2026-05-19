@@ -1,0 +1,30 @@
+# Custom Resources pour le tigera-operator (Calico).
+# Le manifest tigera-operator.yaml installe juste le controller ; ces CR
+# disent au controller QUOI deployer (CNI, calico-node DaemonSet, APIServer).
+#
+# Doc : https://docs.tigera.io/calico/latest/getting-started/kubernetes/kind
+---
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  # Variant 'Calico' = community open-source (vs 'TigeraSecureEnterprise' payant).
+  variant: Calico
+  calicoNetwork:
+    # Doit correspondre au podSubnet de kind-config.yaml (192.168.0.0/16).
+    ipPools:
+      - blockSize: 26
+        cidr: 192.168.0.0/16
+        encapsulation: VXLANCrossSubnet
+        natOutgoing: Enabled
+        nodeSelector: all()
+    # Necessaire pour kind : le linux-bridge containerd ne gere pas
+    # bien le BPF mode de Calico. On reste sur iptables + Linux dataplane.
+    linuxDataplane: Iptables
+---
+apiVersion: operator.tigera.io/v1
+kind: APIServer
+metadata:
+  name: default
+spec: {}
