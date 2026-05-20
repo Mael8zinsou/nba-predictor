@@ -11,7 +11,6 @@
 ![Distroless](https://img.shields.io/badge/Docker-distroless-2496ED?logo=docker&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
----
 
 ## Pourquoi ce projet
 
@@ -27,7 +26,6 @@ Le résultat : un pipeline reproductible, observable, sécurisé et démontrable
 
 > **Crédit** — l'application NBA initiale (modèle, API, frontend) est l'œuvre de **Ketsia MULAPI** (juin 2021). La partie industrialisation a été conçue par **Maël M. ZINSOU** en 2026 dans le cadre du cours "Infrastructures et orchestration de données" (YNOV).
 
----
 
 ## Architecture
 
@@ -107,7 +105,6 @@ flowchart TB
 
 > Détails techniques complets → [docs/doc.md](docs/doc.md).
 
----
 
 ## Quickstart
 
@@ -162,7 +159,6 @@ make cluster-down        # supprime le cluster kind
 
 > Cookbook complet des commandes par vague → [docs/key_commands.md](docs/key_commands.md).
 
----
 
 ## Roadmap
 
@@ -183,7 +179,6 @@ make cluster-down        # supprime le cluster kind
 - [ ] DAG `nba_orchestration` : se déploie/détecte mais scheduling bloqué sur kind local (limite connue, cf. [doc.md §11.7](docs/doc.md))
 - [ ] DVC (versionnage dataset) + DAG Airflow d'entraînement batch
 
----
 
 ## Documentation
 
@@ -196,7 +191,6 @@ make cluster-down        # supprime le cluster kind
 | [docs/PREREQUISITES.md](https://www.google.com/search?q=docs/PREREQUISITES.md) | Install des outils par OS (Windows / macOS / Linux) |
 | [docs/Rapport projet orchestra nba_predictor.pdf]() | Rapport rendu pour le cours (V3) |
 
----
 
 ## License
 
@@ -204,7 +198,6 @@ make cluster-down        # supprime le cluster kind
 
 Le code applicatif initial est © Ketsia MULAPI TITA 2021. L'industrialisation est © Maël M. ZINSOU 2026.
 
----
 
 ## Contact
 
