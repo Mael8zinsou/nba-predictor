@@ -1,3 +1,9 @@
+# Values pour Apache Airflow 2.10.5 (chart Helm 1.16.0, version PINNEE dans le
+# Makefile via AIRFLOW_CHART_VERSION). Ces values sont ecrites pour la lignee
+# 2.x : `webserver.defaultUser` (renomme `createUserJob.defaultUser` en chart 3.x),
+# composant `webserver` (renomme `api-server` en 3.x). Sur Airflow 3.2, un run
+# manuel du DAG nba_orchestration restait bloque en 'queued' (cf. doc.md bug 11.x).
+# Pour migrer vers 3.x : voir le commentaire AIRFLOW_CHART_VERSION du Makefile.
 executor: LocalExecutor
 
 config:

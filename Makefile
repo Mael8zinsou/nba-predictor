@@ -41,6 +41,16 @@ KIND_NODE_IMAGE ?= kindest/node:v1.32.2@sha256:36187f6c542fa9b78d2d499de4c857249
 # 1 CR Installation/APIServer). Mise a jour : tester d'abord en cluster jetable.
 CALICO_VERSION ?= v3.28.2
 
+# Version du chart Helm Airflow (PINNEE). Sans pin, Helm prend la derniere
+# (chart 1.21 / Airflow 3.2) ou un run manuel de DAG reste bloque en 'queued'
+# (logical_date NULL, scheduler ne materialise pas la task -- regression 3.2
+# constatee au test du 2026-05-20). Le chart 1.16.0 = Airflow 2.10.5, derniere
+# 2.x eprouvee, ou schedule=None + trigger manuel fonctionne. Compatible avec
+# le airflow-values.yaml actuel (webserver.defaultUser, composant 'webserver').
+# Pour upgrader vers 3.x : tester d'abord le DAG nba_orchestration de bout en
+# bout sur un cluster jetable + adapter les labels (api-server) et les values.
+AIRFLOW_CHART_VERSION ?= 1.16.0
+
 # Couleurs pour les messages
 CYAN   := \033[36m
 GREEN  := \033[32m
@@ -322,9 +332,10 @@ airflow: apply-sealed-secrets ## Déploie Postgres dédié puis Airflow (Helm) a
 	# explicitement le Job de migration et les pods principaux.
 	@helm upgrade --install airflow apache-airflow/airflow \
 		--namespace airflow -f airflow-values.yaml \
+		--version $(AIRFLOW_CHART_VERSION) \
 		--timeout 10m
 	@printf "$(CYAN)> Attente que les pods Airflow soient Ready (migration DB + demarrage, ~5 min au premier run)...$(RESET)\n"
-	@kubectl wait --for=condition=Ready pod -l component=api-server -n airflow --timeout=10m
+	@kubectl wait --for=condition=Ready pod -l component=webserver -n airflow --timeout=10m
 	@kubectl wait --for=condition=Ready pod -l component=scheduler -n airflow --timeout=5m
 	@$(MAKE) --no-print-directory sync-dags
 	@printf "$(CYAN)> Application des NetworkPolicies airflow...$(RESET)\n"
@@ -350,7 +361,7 @@ port-forward-app: ## Expose le frontend NBA sur http://localhost:8080
 
 port-forward-airflow: ## Expose l'UI Airflow sur http://localhost:8081
 	@printf "$(CYAN)> Airflow UI : http://localhost:8081 (admin/admin)$(RESET)  (Ctrl+C pour arreter)\n"
-	@kubectl port-forward -n airflow svc/airflow-api-server 8081:8080
+	@kubectl port-forward -n airflow svc/airflow-webserver 8081:8080
 
 port-forward-grafana: ## Expose Grafana sur http://localhost:3000
 	@printf "$(CYAN)> Grafana : http://localhost:3000 (admin/prom-operator)$(RESET)  (Ctrl+C pour arreter)\n"

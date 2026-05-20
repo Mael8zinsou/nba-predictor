@@ -910,6 +910,18 @@ Voir §6.3. V4.3 ne filtre que l'ingress. V4.3bis pour filtrer l'egress (cibler 
 
 Le chart Airflow demande un PVC ReadWriteMany pour les logs (4 pods qui écrivent). Le provisioner local de kind (`rancher.io/local-path`) ne supporte que ReadWriteOnce → PVC reste `Pending`. On a désactivé `logs.persistence.enabled` (`airflow-values.yaml`), les logs sont en `emptyDir` (perdus au restart du pod). Acceptable pour démo local. Prod : NFS/Longhorn/CSI cloud (EFS/Azure Files/Filestore).
 
+### 11.7 DAG `nba_orchestration` reste `queued` (scheduling KO sur kind local)
+
+**Statut : limite connue, non bloquante pour la démo.** Constaté au test complet du 2026-05-20.
+
+**Symptôme** : un run manuel du DAG (`airflow dags trigger nba_orchestration`) est créé en base (`dag_run` avec `execution_date` renseignée) mais reste indéfiniment en `queued` ; la `TaskInstance` n'est jamais promue `queued → running`. Le scheduler **vit** (heartbeat frais, état `running`, DAG sérialisé en `serialized_dag`, 0 import error) mais sa boucle de scheduling ne loggue aucun envoi à l'executor (`Setting ... to queued` / `Sending ... to executor` absents).
+
+**Ce que ce n'est PAS** : pas un problème de version d'Airflow. Symptôme **identique en Airflow 3.2.0 (chart 1.21) et 2.10.5 (chart 1.16)**. Le downgrade en 2.10.5 (pin actuel) corrige les *deprecation warnings* (`webserver.defaultUser`, composant `webserver`) et fiabilise le déploiement, mais pas le scheduling du DAG.
+
+**Cause probable** : environnement kind contraint. Le pod scheduler tourne **sans `resources` requests/limits** (`resources: {}`), avec le `DagFileProcessor` embarqué (`standalone_dag_processor=False`) sur le même pod ; la boucle critique `_do_scheduling` semble starvée alors que le thread de heartbeat (séparé) répond. Pistes de résolution non explorées (coût/incertitude) : donner des `resources` garanties au scheduler, augmenter `scheduler.parsing_processes`, passer en `standalone_dag_processor=True` (processor dédié), ou tester sur un cluster non-kind.
+
+**Impact démo** : le DAG **se déploie, est détecté, sérialisé, et synchronisé** (`make airflow` exit 0) — il ne s'exécute simplement pas de bout en bout en l'état. L'appel cross-namespace qu'il illustre (`GET /api/nba/predict`) reste démontrable directement via l'API (Ingress) et via le scrape Prometheus. Tout le reste du pipeline (app, HPA, Ingress, monitoring, alertes, MLflow, sealed-secrets reproductibles) fonctionne.
+
 ---
 
 ## 12. Décisions architecturales (mini-ADR)
