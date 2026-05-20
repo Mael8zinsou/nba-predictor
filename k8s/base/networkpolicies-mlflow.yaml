@@ -1,0 +1,37 @@
+# NetworkPolicies du namespace 'mlflow' (V6 — Calico CNI requis).
+#
+# Strategie : default-deny ingress + allow l'acces au serveur MLflow (port 5000)
+# pour le port-forward (UI) et les runs d'entrainement.
+#
+# L'entrainement (train.py) tourne actuellement HORS cluster (sur la machine
+# dev, via port-forward) ou pourrait tourner dans un Job/DAG futur. On accepte
+# l'ingress sur 5000 de maniere large (comme les autres UIs : Grafana, Airflow)
+# car c'est un point d'acces operateur, pas un service expose publiquement.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: mlflow
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mlflow-ingress
+  namespace: mlflow
+spec:
+  podSelector:
+    matchLabels:
+      app: mlflow
+  policyTypes:
+    - Ingress
+  ingress:
+    # Acces au serveur MLflow (UI + API tracking) via port-forward kubectl
+    # ou depuis un Job d'entrainement intra-cluster (futur).
+    - ports:
+        - protocol: TCP
+          port: 5000

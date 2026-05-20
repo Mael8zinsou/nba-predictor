@@ -1,0 +1,119 @@
+# Serveur MLflow tracking dans le cluster (Vague 6).
+#
+# Choix d'architecture (contexte local kind, budget RAM serre) :
+#   - Backend store : SQLite sur PVC (pas de Postgres dedie -> economie RAM).
+#     Suffisant pour un tracking mono-utilisateur de demo.
+#   - Artifact store : repertoire local sur le MEME PVC (pas de MinIO/S3).
+#   - 1 replica (SQLite ne supporte pas le multi-writer de toute facon).
+#
+# En prod, on remplacerait par : backend Postgres + artifacts sur S3/GCS/MinIO,
+# plusieurs replicas derriere le LB. Ici, on privilegie la simplicite.
+#
+# L'image officielle ghcr.io/mlflow/mlflow embarque le serveur. On installe
+# le driver SQLite (deja present) + on lance `mlflow server`.
+#
+# Acces UI : make port-forward-mlflow -> http://localhost:5000
+# Tracking depuis train.py : MLFLOW_TRACKING_URI=http://localhost:5000
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlflow
+  labels:
+    role: mlops
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlflow-data
+  namespace: mlflow
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: mlflow
+  labels:
+    app: mlflow
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # SQLite sur PVC RWO : pas de rolling (un seul writer)
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: mlflow
+          image: ghcr.io/mlflow/mlflow:v2.17.2
+          command: ["mlflow"]
+          args:
+            - server
+            - --host=0.0.0.0
+            - --port=5000
+            - --backend-store-uri=sqlite:////mlflow/data/mlflow.db
+            - --artifacts-destination=/mlflow/data/artifacts
+            - --serve-artifacts
+            # 1 worker gunicorn : tracking mono-utilisateur de demo. Le defaut
+            # (4 workers) saturait la limite memoire (OOMKilled, exit 137).
+            - --workers=1
+          ports:
+            - containerPort: 5000
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "768Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /mlflow/data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mlflow-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: mlflow
+spec:
+  selector:
+    app: mlflow
+  ports:
+    - port: 5000
+      targetPort: 5000

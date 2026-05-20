@@ -13,7 +13,7 @@ Projet d'industrialisation d'une application ML de classification de joueurs NBA
 
 L'objectif n'est pas le modèle ML (régression logistique simple, déjà entraînée et sérialisée dans `classifier.pikl`), mais le **pipeline d'industrialisation** : conteneurisation, orchestration Kubernetes, automatisation Airflow, observabilité Prometheus/Grafana, sécurité réseau.
 
-**État au 2026-05-20** : Vagues 1 à 6 (cœur) terminées (cluster + sécurité + secrets + NP + HPA + Ingress + PDB + observabilité + pipeline d'entraînement reproductible MLflow + fix `preprocess()`). Reste : déploiement serveur MLflow dans le cluster (V6 in-progress), V7 (présentation portfolio).
+**État au 2026-05-20** : Vagues 1 à 6 terminées (cluster + sécurité + secrets + NP + HPA + Ingress + PDB + observabilité + pipeline d'entraînement reproductible MLflow + fix `preprocess()` + serveur MLflow dans le cluster). Reste : V6bis (DVC + DAG training batch), V7 (présentation portfolio).
 
 Pour tous les détails techniques (architecture, stack, conventions, ADR, bugs connus) → **[docs/doc.md](docs/doc.md)**.
 

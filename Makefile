@@ -50,8 +50,8 @@ RESET  := \033[0m
 .DEFAULT_GOAL := help
 .PHONY: help all cluster-up cluster-down build deploy nba airflow monitoring sync-dags \
         calico-install network-policies metrics-server-install ingress-install \
-        sealed-secrets-install seal-secrets apply-sealed-secrets \
-        load-test port-forward-app port-forward-airflow port-forward-grafana \
+        sealed-secrets-install seal-secrets apply-sealed-secrets mlflow train \
+        load-test port-forward-app port-forward-airflow port-forward-grafana port-forward-mlflow \
         logs-backend logs-frontend logs-airflow status destroy clean-images
 
 help: ## Affiche cette aide
@@ -114,6 +114,23 @@ ingress-install: ## Installe nginx-ingress controller (V4.5, requis pour Ingress
 	@printf "$(GREEN)[OK] ingress-nginx pret. Test : curl http://nba.localhost$(RESET)\n"
 	@printf "  Si nba.localhost ne resout pas : ajouter '127.0.0.1 nba.localhost' a /etc/hosts (Linux/macOS)\n"
 	@printf "  ou C:\\Windows\\System32\\drivers\\etc\\hosts (Windows)\n"
+
+mlflow: ## Déploie le serveur MLflow tracking dans le cluster (namespace mlflow, V6)
+	@printf "$(CYAN)> Deploiement du serveur MLflow...$(RESET)\n"
+	@kubectl apply -f k8s/mlflow.yaml
+	@printf "$(CYAN)> Labelisation du namespace mlflow + NetworkPolicies...$(RESET)\n"
+	@kubectl label namespace mlflow role=mlops --overwrite >/dev/null
+	@kubectl apply -f k8s/base/networkpolicies-mlflow.yaml
+	@printf "$(CYAN)> Attente que le serveur MLflow soit Ready...$(RESET)\n"
+	@kubectl wait --for=condition=Available deployment/mlflow -n mlflow --timeout=180s
+	@printf "$(GREEN)[OK] Serveur MLflow deploye.$(RESET)\n"
+	@printf "  UI : make port-forward-mlflow puis http://localhost:5000\n"
+	@printf "  Entrainer vers ce serveur : make train (apres port-forward)\n"
+
+train: ## Lance l'entrainement vers le serveur MLflow du cluster (port-forward requis)
+	@printf "$(CYAN)> Entrainement vers MLflow (http://localhost:5000)...$(RESET)\n"
+	@printf "$(YELLOW)Pre-requis : 'make port-forward-mlflow' dans un autre terminal.$(RESET)\n"
+	@MLFLOW_TRACKING_URI=http://localhost:5000 python training/train.py
 
 metrics-server-install: ## Installe metrics-server (requis pour HPA, V4.4)
 	@printf "$(CYAN)> Installation de metrics-server...$(RESET)\n"
@@ -299,6 +316,10 @@ port-forward-airflow: ## Expose l'UI Airflow sur http://localhost:8081
 port-forward-grafana: ## Expose Grafana sur http://localhost:3000
 	@printf "$(CYAN)> Grafana : http://localhost:3000 (admin/prom-operator)$(RESET)  (Ctrl+C pour arreter)\n"
 	@kubectl port-forward -n monitoring svc/kube-prom-grafana 3000:80
+
+port-forward-mlflow: ## Expose l'UI MLflow sur http://localhost:5000
+	@printf "$(CYAN)> MLflow : http://localhost:5000$(RESET)  (Ctrl+C pour arreter)\n"
+	@kubectl port-forward -n mlflow svc/mlflow 5000:5000
 
 # =============================================================================
 # Observation

@@ -20,6 +20,7 @@
 - [Vague 4.4 — HPA + metrics-server](#vague-44--hpa--metrics-server)
 - [Vague 4.5 — Ingress + PDB](#vague-45--ingress--pdb)
 - [Vague 5 — Dashboard + Alerting](#vague-5--dashboard--alerting)
+- [Vague 6 — Entraînement ML + MLflow](#vague-6--entraînement-ml--mlflow)
 - [Opérations quotidiennes](#opérations-quotidiennes)
 - [Dépannage](#dépannage)
 
@@ -708,6 +709,77 @@ kubectl rollout status deployment/nba-backend -n nba
 ```bash
 kubectl logs -n monitoring -l app=alertmanager-webhook-demo -f
 # Chaque POST d'Alertmanager est loggé en JSON (alertname, status, labels...)
+```
+
+---
+
+## Vague 6 — Entraînement ML + MLflow
+
+### Entraîner le modèle en local (MLflow mode fichier)
+
+```bash
+pip install -r training/requirements.txt
+python training/train.py
+# Produit : nba-api/static/model/classifier.pikl + scaler.pikl
+# Tracking : ./mlruns/ (gitignored)
+# Métriques test : accuracy ~0.72, f1 ~0.79, roc_auc ~0.77 (reproductible, seed 42)
+```
+
+### Déployer le serveur MLflow dans le cluster
+
+```bash
+make mlflow
+# namespace mlflow + PVC + Deployment (SQLite + artifacts sur PVC) + Service + NP
+```
+
+### Entraîner vers le serveur MLflow du cluster
+
+```bash
+# Terminal 1 : port-forward
+make port-forward-mlflow         # http://localhost:5000
+
+# Terminal 2 : entraînement tracké vers le serveur
+make train
+# = MLFLOW_TRACKING_URI=http://localhost:5000 python training/train.py
+```
+
+### Consulter les runs trackés
+
+```bash
+make port-forward-mlflow
+# UI : http://localhost:5000 -> experiment "nba-career-longevity"
+
+# Ou via l'API
+curl -sf "http://localhost:5000/api/2.0/mlflow/experiments/search" \
+  -H "Content-Type: application/json" -d '{"max_results":10}' | python -m json.tool
+```
+
+### Vérifier la cohérence inférence après ré-entraînement
+
+```bash
+cd nba-api
+python -c "
+import warnings; warnings.filterwarnings('ignore')
+from functions import NBAPredictor
+p = NBAPredictor()
+# Les 2 routes doivent donner le meme resultat sur un meme joueur
+import pandas as pd
+df = pd.read_csv('static/data/nba_logreg.csv')
+feat = ['GP','MIN','PTS','FGM','FGA','FG%','3P Made','3PA','3P%','FTM','FTA','FT%','OREB','DREB','REB','AST','STL','BLK','TOV']
+vals = df[df['Name']=='Tim Hardaway'][feat].fillna(0).iloc[0].tolist()
+arr = NBAPredictor.build_params(*vals)
+print('predict :', p.predict_vector(p.preprocess(arr))['decision'][0])
+print('by_name :', p.predict_by_name('Tim Hardaway')['decision'][0])
+"
+```
+
+### Débogage : MLflow en CrashLoopBackOff
+
+```bash
+kubectl get pods -n mlflow
+kubectl describe pod -n mlflow -l app=mlflow | grep -iE "exit code|reason|oomkilled"
+# Exit code 137 = OOMKilled -> augmenter limits.memory ou reduire --workers
+kubectl logs -n mlflow -l app=mlflow --tail=30
 ```
 
 ---

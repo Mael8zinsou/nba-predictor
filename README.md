@@ -46,6 +46,10 @@ Le résultat : un pipeline reproductible, observable, sécurisé et démontrable
 - **Orchestration** : DAG `nba_orchestration` → `GET /api/nba/predict` (cross-namespace autorisé)
 - **Observabilité** : FastAPI `/metrics` → Prometheus → Grafana
 
+**Data Engineering (Vague 6)** :
+- Pipeline d'entraînement reproductible (`training/train.py`, seed fixe, split train/test) qui corrige le bug historique de `preprocess()` (scaler sérialisé) et remplace le modèle sklearn 0.24.1 par un modèle 1.5.1
+- Tracking **MLflow** déployé dans le cluster (namespace `mlflow`) : params, métriques, artefacts
+
 **Observabilité (Vague 5)** :
 - Dashboard Grafana "NBA Predictor — API Overview" **versionné en Git** (provisionné via ConfigMap, pas cliqué à la main) : débit, latence p50/p95/p99, taux d'erreur, replicas
 - 4 alertes `PrometheusRule` (latence haute, erreurs 5xx, backend down, HPA saturé) routées vers Alertmanager → receiver webhook de démo
@@ -128,7 +132,8 @@ make cluster-down        # supprime le cluster kind
 - [x] Ingress nginx (`nba.localhost`) + PodDisruptionBudgets backend/frontend **— Vague 4.5**
 - [x] Dashboard Grafana versionné (ConfigMap) + alertes PrometheusRule routées vers Alertmanager **— Vague 5**
 - [x] Pipeline d'entraînement reproductible (`training/train.py` + MLflow tracking) + fix bug `preprocess()` (scaler sérialisé) **— Vague 6**
-- [ ] Serveur MLflow déployé dans le cluster (namespace `mlflow`) **— Vague 6 (in progress)**
+- [x] Serveur MLflow déployé dans le cluster (namespace `mlflow`, SQLite + artifacts sur PVC) **— Vague 6**
+- [ ] DVC (versionnage dataset) + DAG Airflow d'entraînement batch **— Vague 6bis**
 - [ ] Présentation portfolio : Medium article, ADR, demo vidéo, GitHub Pages **— Vague 7**
 
 ---

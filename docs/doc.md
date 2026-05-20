@@ -229,8 +229,10 @@ nba_predictor/
 │   │   └── prod/                     # Stub README pour prod managée (GKE/EKS/AKS)
 │   ├── secrets/
 │   │   └── airflow-credentials.unsealed.yaml  # GITIGNORÉ — source en clair pour kubeseal
-│   ├── kind-config.yaml              # Cluster kind (1 cp + 1 worker, port 30081, disableDefaultCNI)
+│   ├── base/.../networkpolicies-mlflow.yaml   # V6 : NP namespace mlflow
+│   ├── kind-config.yaml              # Cluster kind (1 cp + 1 worker, ports 80/443, disableDefaultCNI)
 │   ├── calico-installation.yaml      # CR Installation + APIServer pour tigera-operator
+│   ├── mlflow.yaml                   # V6 : serveur MLflow (ns + PVC + Deployment + Service)
 │   └── airflow-postgres.yaml         # Postgres dédié (envFrom: secretRef SealedSecret)
 ├── dags/                             # DAGs Airflow
 │   └── nba_orchestration.py          # Appel quotidien GET /api/nba/predict
@@ -769,7 +771,30 @@ MLFLOW_TRACKING_URI=http://localhost:5000 python training/train.py
 
 ### 8.3 Serveur MLflow dans le cluster
 
-> _Section à compléter (V6bis : déploiement MLflow tracking server dans le namespace `mlflow`)._
+Plutôt que de garder le tracking en local (`mlruns/`), on déploie un **serveur MLflow tracking** dans le cluster (namespace `mlflow`), cohérent avec le reste de l'infra.
+
+**Architecture (volontairement minimaliste pour kind)** :
+| Composant | Choix | Pourquoi |
+|---|---|---|
+| Backend store | SQLite sur PVC (`sqlite:////mlflow/data/mlflow.db`) | Pas de Postgres dédié → économie RAM (budget kind serré) |
+| Artifact store | Répertoire local sur le même PVC (`--serve-artifacts`) | Pas de MinIO/S3 |
+| Replicas | 1 (`strategy: Recreate`) | SQLite = un seul writer |
+| Workers gunicorn | `--workers=1` | Le défaut (4) saturait la limite mémoire (OOMKilled, exit 137) |
+
+> En prod : backend Postgres + artifacts S3/GCS/MinIO + plusieurs replicas. Ici on privilégie la simplicité et la frugalité RAM.
+
+**Déploiement** :
+```bash
+make mlflow              # namespace + PVC + Deployment + Service + NetworkPolicy
+make port-forward-mlflow # http://localhost:5000 (UI)
+make train               # entraîne en envoyant le run vers le serveur cluster
+```
+
+`make train` exporte `MLFLOW_TRACKING_URI=http://localhost:5000` et lance `training/train.py`. Le run (params, métriques, modèle) est persisté dans le backend SQLite du cluster — visible dans l'UI MLflow (experiment `nba-career-longevity`).
+
+**Piège rencontré (documenté pour mémoire)** : avec la limite mémoire à 512Mi + 4 workers gunicorn (défaut), le pod tombait en `CrashLoopBackOff` (exit code 137 = OOMKilled). Fix : `--workers=1` + limite portée à 768Mi + `timeoutSeconds: 5` sur les probes `/health` (le défaut 1s était trop agressif au boot).
+
+**Limite RAM** : MLflow ajoute ~400-500 Mo au cluster. Sur un kind 8 Go déjà chargé (Calico + Airflow + kube-prom-stack + ingress + app), surveiller `kubectl top nodes`. Si besoin, déployer MLflow à la demande (`make mlflow`) plutôt que dans `make all`.
 
 ---
 
