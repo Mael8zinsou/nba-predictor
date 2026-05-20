@@ -127,7 +127,6 @@ make cluster-down        # supprime le cluster kind
 - [x] HorizontalPodAutoscaler backend (CPU 70%, min 2 max 5) + metrics-server + load test **— Vague 4.4**
 - [x] Ingress nginx (`nba.localhost`) + PodDisruptionBudgets backend/frontend **— Vague 4.5**
 - [x] Dashboard Grafana versionné (ConfigMap) + alertes PrometheusRule routées vers Alertmanager **— Vague 5**
-- [ ] Logs centralisés (Loki) + tracing distribué (OpenTelemetry) **— Vague 5bis**
 - [ ] Pipeline d'entraînement reproductible (MLflow + DVC + fix bug `preprocess()`) **— Vague 6**
 - [ ] Présentation portfolio : Medium article, ADR, demo vidéo, GitHub Pages **— Vague 7**
 
