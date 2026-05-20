@@ -289,8 +289,17 @@ git commit -m "chore: regen SealedSecret après rotation password postgres"
 ```bash
 make apply-sealed-secrets
 # = kubectl apply -f k8s/base/airflow-credentials-sealedsecret.yaml
-#   + wait que les 3 Secrets K8s soient déchiffrés par le controller
+#   + wait que les 3 Secrets K8s soient déchiffrés par le controller (20s)
+#   + AUTO-RESEAL : si non déchiffrables (cluster recréé => nouvelle clé),
+#     re-scelle depuis k8s/secrets/airflow-credentials.unsealed.yaml puis
+#     ré-applique. Rend `make all` reproductible from-scratch. (cf. doc.md §6.2)
 ```
+
+> **Pourquoi l'auto-reseal ?** Après `make cluster-down` + `make all`, le
+> controller sealed-secrets régénère sa clé : les SealedSecret committés
+> (chiffrés avec l'ancienne clé) deviennent indéchiffrables → Postgres bloqué.
+> L'auto-reseal détecte ce cas et re-scelle avec la clé courante (nécessite
+> `kubeseal` + le fichier `*.unsealed.yaml` local, gitignoré).
 
 ### Vérifier le déchiffrement
 
@@ -801,7 +810,7 @@ make logs-airflow     # scheduler uniquement (le plus parlant)
 
 # Manuel pour un pod précis :
 kubectl logs -f -n nba <pod-name> --tail=100
-kubectl logs -f -n airflow -l component=api-server --tail=50
+kubectl logs -f -n airflow -l component=webserver --tail=50  # Airflow 2.10 : 'webserver' (pas 'api-server' qui est du 3.x)
 ```
 
 ### Port-forward des UIs
@@ -1033,8 +1042,9 @@ kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- ls /opt/airflow/dags
 # 2. Sinon re-sync
 make sync-dags
 
-# 3. Vérifier les logs du dag-processor (parse errors)
-kubectl logs -n airflow -l component=dag-processor --tail=50
+# 3. Vérifier les logs du scheduler (parse errors ; en Airflow 2.10 le DAG
+#    processing est embarqué dans le scheduler, pas un pod dag-processor séparé)
+kubectl logs -n airflow -l component=scheduler --tail=50
 ```
 
 ### `make build` échoue avec "ezwinports.make ne respecte pas SHELL"

@@ -4,7 +4,7 @@
 
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-1.32-326CE5?logo=kubernetes&logoColor=white)
 ![Calico](https://img.shields.io/badge/Calico-CNI-FF6900?logo=tigera&logoColor=white)
-![Airflow](https://img.shields.io/badge/Apache_Airflow-3.x-017CEE?logo=apacheairflow&logoColor=white)
+![Airflow](https://img.shields.io/badge/Apache_Airflow-2.10.5-017CEE?logo=apacheairflow&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
 ![Prometheus](https://img.shields.io/badge/Prometheus-monitoring-E6522C?logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-dashboards-F46800?logo=grafana&logoColor=white)
@@ -36,7 +36,7 @@ Le résultat : un pipeline reproductible, observable, sécurisé et démontrable
 | Namespace | Composants | Rôle |
 |---|---|---|
 | `nba` | Frontend Nginx + Backend FastAPI (distroless) | Application métier |
-| `airflow` | Apache Airflow 3 (Helm) + PostgreSQL 16 dédié | Orchestration des appels API |
+| `airflow` | Apache Airflow 2.10.5 (Helm, chart pinné) + PostgreSQL 16 dédié | Orchestration des appels API |
 | `monitoring` | kube-prometheus-stack (Prometheus + Grafana) | Supervision via ServiceMonitor |
 
 ![Architecture globale](docs/architecture_excalidraw.jpg)
@@ -56,7 +56,7 @@ Le résultat : un pipeline reproductible, observable, sécurisé et démontrable
 
 **Sécurité (Vague 4)** :
 - Image backend en `gcr.io/distroless/python3-debian12:nonroot` (~10 CVE HIGH résiduelles documentées dans `.trivyignore` vs ~250 sur l'image slim)
-- Secrets Postgres/Airflow chiffrés via [Bitnami sealed-secrets](https://github.com/bitnami-labs/sealed-secrets) (committable)
+- Secrets Postgres/Airflow chiffrés via [Bitnami sealed-secrets](https://github.com/bitnami-labs/sealed-secrets) (committable) — `make all` **auto-re-scelle** si la clé du controller change (cluster recréé), garantissant un déploiement from-scratch reproductible
 - NetworkPolicies zero-trust : pod intrus dans `default` → backend ou postgres = **timeout effectif**
 
 > Détails techniques complets → [docs/doc.md](docs/doc.md).
@@ -133,6 +133,8 @@ make cluster-down        # supprime le cluster kind
 - [x] Dashboard Grafana versionné (ConfigMap) + alertes PrometheusRule routées vers Alertmanager **— Vague 5**
 - [x] Pipeline d'entraînement reproductible (`training/train.py` + MLflow tracking) + fix bug `preprocess()` (scaler sérialisé) **— Vague 6**
 - [x] Serveur MLflow déployé dans le cluster (namespace `mlflow`, SQLite + artifacts sur PVC) **— Vague 6**
+- [x] Test complet de reproductibilité : `cluster-down` + `make all` from-scratch validé de bout en bout (auto-reseal sealed-secrets, Airflow chart pinné 2.10.5) **— 2026-05-20**
+- [ ] DAG `nba_orchestration` : se déploie/détecte mais scheduling bloqué sur kind local (limite connue, cf. [doc.md §11.7](docs/doc.md)) **— à reprendre en 6bis**
 - [ ] DVC (versionnage dataset) + DAG Airflow d'entraînement batch **— Vague 6bis**
 - [ ] Présentation portfolio : Medium article, ADR, demo vidéo, GitHub Pages **— Vague 7**
 

@@ -55,7 +55,7 @@ L'application tourne sur un cluster Kubernetes local **[kind](https://kind.sigs.
 | Namespace | Composants | Rôle | Label `role=` |
 |---|---|---|---|
 | `nba` | Frontend Nginx + Backend FastAPI | Application métier | `app` |
-| `airflow` | Apache Airflow 3 (LocalExecutor, Helm) + PostgreSQL 16 dédié | Orchestration des appels API | `orchestration` |
+| `airflow` | Apache Airflow 2.10.5 (LocalExecutor, Helm chart pinné 1.16.0) + PostgreSQL 16 dédié | Orchestration des appels API | `orchestration` |
 | `monitoring` | kube-prometheus-stack (Prometheus + Grafana + Alertmanager + Operator) | Supervision via ServiceMonitor | `monitoring` |
 
 Le label `role=` sur les namespaces permet aux **NetworkPolicies** des autres namespaces de cibler les flux cross-namespace par sélecteur sémantique (voir §6.3).
@@ -167,7 +167,7 @@ sequenceDiagram
 | Backend | **FastAPI** + scikit-learn | 0.115.6 / 1.5.1 | Performance async, doc OpenAPI auto, Prometheus client natif |
 | Backend image | **`gcr.io/distroless/python3-debian12:nonroot`** | Python 3.11.2 | Pas de shell ni d'apt, UID 65532, surface d'attaque drastiquement réduite |
 | Frontend / Reverse proxy | **Nginx** | 1.31 (alpine) | Statique performant, élimine les problèmes CORS, single entry point |
-| Orchestration | **Apache Airflow 3** (Helm) | LocalExecutor | Standard pour DAGs, logs UI, dag-processor découplé |
+| Orchestration | **Apache Airflow 2.10.5** (Helm, chart pinné 1.16.0) | LocalExecutor | Standard pour DAGs, logs UI ; version 2.x éprouvée (cf. §11.7 sur le pin) |
 | Base métadonnées Airflow | **PostgreSQL 16** dédié | image officielle | Robuste, déployé séparément du chart Airflow (subchart instable) |
 | Secrets | **Bitnami sealed-secrets** | controller via Helm | SealedSecret committable, déchiffrement côté cluster uniquement |
 | Métriques | **Prometheus** (kube-prometheus-stack) | helm chart 85.x | Scraping auto via ServiceMonitor (label `release: kube-prom`) |
