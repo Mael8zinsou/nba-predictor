@@ -39,22 +39,68 @@ Le résultat : un pipeline reproductible, observable, sécurisé et démontrable
 | `airflow` | Apache Airflow 2.10.5 (Helm, chart pinné) + PostgreSQL 16 dédié | Orchestration des appels API |
 | `monitoring` | kube-prometheus-stack (Prometheus + Grafana) | Supervision via ServiceMonitor |
 
-![Architecture globale](docs/architecture_excalidraw.jpg)
+```mermaid
+flowchart TB
+    user([Navigateur / client]) -->|"http://nba.localhost"| ing
+
+    subgraph cluster["Cluster kind — CNI Calico, NetworkPolicies zero-trust"]
+        ing["Ingress nginx<br/>(ports 80/443)"]
+
+        subgraph ns_nba["namespace nba"]
+            fe["Frontend Nginx<br/>reverse-proxy /api/*"]
+            be["Backend FastAPI<br/>distroless · HPA 2→5 · PDB"]
+            fe -->|"/api/*"| be
+        end
+
+        subgraph ns_air["namespace airflow"]
+            sched["Airflow 2.10.5<br/>scheduler + webserver"]
+            pg[("PostgreSQL 16<br/>dédié")]
+            sched --- pg
+        end
+
+        subgraph ns_mon["namespace monitoring"]
+            prom["Prometheus"]
+            graf["Grafana<br/>dashboard versionné"]
+            am["Alertmanager<br/>→ webhook démo"]
+            prom --> graf
+            prom --> am
+        end
+
+        subgraph ns_ml["namespace mlflow"]
+            mlf["MLflow tracking<br/>SQLite + artifacts (PVC)"]
+        end
+
+        ing --> fe
+        sched -.->|"DAG nba_orchestration<br/>GET /api/nba/predict"| be
+        prom -.->|"scrape /metrics"| be
+    end
+
+    train["training/train.py<br/>(hors cluster)"] -.->|"log params/metrics"| mlf
+
+    classDef nba fill:#e3f2fd,stroke:#1565c0;
+    classDef air fill:#ede7f6,stroke:#5e35b1;
+    classDef mon fill:#fff3e0,stroke:#e65100;
+    classDef ml fill:#e8f5e9,stroke:#2e7d32;
+    class fe,be nba;
+    class sched,pg air;
+    class prom,graf,am mon;
+    class mlf ml;
+```
 
 **Flux principaux** :
-- **Applicatif** : navigateur → Nginx (NodePort 30081, reverse proxy `/api/*`) → FastAPI
+- **Applicatif** : navigateur → Ingress nginx (`nba.localhost`) → Nginx (reverse-proxy `/api/*`) → FastAPI
 - **Orchestration** : DAG `nba_orchestration` → `GET /api/nba/predict` (cross-namespace autorisé)
-- **Observabilité** : FastAPI `/metrics` → Prometheus → Grafana
+- **Observabilité** : FastAPI `/metrics` → Prometheus → Grafana / Alertmanager
 
-**Data Engineering (Vague 6)** :
+**Data Engineering** :
 - Pipeline d'entraînement reproductible (`training/train.py`, seed fixe, split train/test) qui corrige le bug historique de `preprocess()` (scaler sérialisé) et remplace le modèle sklearn 0.24.1 par un modèle 1.5.1
 - Tracking **MLflow** déployé dans le cluster (namespace `mlflow`) : params, métriques, artefacts
 
-**Observabilité (Vague 5)** :
+**Observabilité** :
 - Dashboard Grafana "NBA Predictor — API Overview" **versionné en Git** (provisionné via ConfigMap, pas cliqué à la main) : débit, latence p50/p95/p99, taux d'erreur, replicas
 - 4 alertes `PrometheusRule` (latence haute, erreurs 5xx, backend down, HPA saturé) routées vers Alertmanager → receiver webhook de démo
 
-**Sécurité (Vague 4)** :
+**Sécurité** :
 - Image backend en `gcr.io/distroless/python3-debian12:nonroot` (~10 CVE HIGH résiduelles documentées dans `.trivyignore` vs ~250 sur l'image slim)
 - Secrets Postgres/Airflow chiffrés via [Bitnami sealed-secrets](https://github.com/bitnami-labs/sealed-secrets) (committable) — `make all` **auto-re-scelle** si la clé du controller change (cluster recréé), garantissant un déploiement from-scratch reproductible
 - NetworkPolicies zero-trust : pod intrus dans `default` → backend ou postgres = **timeout effectif**
@@ -120,36 +166,35 @@ make cluster-down        # supprime le cluster kind
 
 ## Roadmap
 
-- [x] Portfolio fundamentals (README, LICENSE, CONTRIBUTING) **— Vague 1**
-- [x] Developer experience (Makefile, Kustomize overlays dev/staging/prod) **— Vague 2**
-- [x] Migration Minikube → kind **— Vague 2bis**
-- [x] CI/CD GitHub Actions (5 jobs lint+test, build Docker GHCR, k8s integration) **— Vague 3**
-- [x] Tests unitaires (pytest) et d'intégration (FastAPI TestClient + kind smoke) **— Vague 3**
-- [x] Secrets K8s via Bitnami sealed-secrets (Postgres + URL SQLAlchemy chiffrés) **— Vague 4.1**
-- [x] Dockerfile multi-stage distroless + Trivy `--exit-code 1` + securityContext strict **— Vague 4.2**
-- [x] NetworkPolicies zero-trust + CNI Calico via tigera-operator **— Vague 4.3**
-- [x] HorizontalPodAutoscaler backend (CPU 70%, min 2 max 5) + metrics-server + load test **— Vague 4.4**
-- [x] Ingress nginx (`nba.localhost`) + PodDisruptionBudgets backend/frontend **— Vague 4.5**
-- [x] Dashboard Grafana versionné (ConfigMap) + alertes PrometheusRule routées vers Alertmanager **— Vague 5**
-- [x] Pipeline d'entraînement reproductible (`training/train.py` + MLflow tracking) + fix bug `preprocess()` (scaler sérialisé) **— Vague 6**
-- [x] Serveur MLflow déployé dans le cluster (namespace `mlflow`, SQLite + artifacts sur PVC) **— Vague 6**
-- [x] Test complet de reproductibilité : `cluster-down` + `make all` from-scratch validé de bout en bout (auto-reseal sealed-secrets, Airflow chart pinné 2.10.5) **— 2026-05-20**
-- [ ] DAG `nba_orchestration` : se déploie/détecte mais scheduling bloqué sur kind local (limite connue, cf. [doc.md §11.7](docs/doc.md)) **— à reprendre en 6bis**
-- [ ] DVC (versionnage dataset) + DAG Airflow d'entraînement batch **— Vague 6bis**
-- [ ] Présentation portfolio : Medium article, ADR, demo vidéo, GitHub Pages **— Vague 7**
+- [x] Portfolio fundamentals (README, LICENSE, CONTRIBUTING)
+- [x] Developer experience (Makefile, Kustomize overlays dev/staging/prod)
+- [x] Migration Minikube → kind
+- [x] CI/CD GitHub Actions (5 jobs lint+test, build Docker GHCR, k8s integration)
+- [x] Tests unitaires (pytest) et d'intégration (FastAPI TestClient + kind smoke)
+- [x] Secrets K8s via Bitnami sealed-secrets (Postgres + URL SQLAlchemy chiffrés)
+- [x] Dockerfile multi-stage distroless + Trivy `--exit-code 1` + securityContext strict
+- [x] NetworkPolicies zero-trust + CNI Calico via tigera-operator
+- [x] HorizontalPodAutoscaler backend (CPU 70%, min 2 max 5) + metrics-server + load test
+- [x] Ingress nginx (`nba.localhost`) + PodDisruptionBudgets backend/frontend
+- [x] Dashboard Grafana versionné (ConfigMap) + alertes PrometheusRule routées vers Alertmanager
+- [x] Pipeline d'entraînement reproductible (`training/train.py` + MLflow tracking) + fix bug `preprocess()` (scaler sérialisé)
+- [x] Serveur MLflow déployé dans le cluster (namespace `mlflow`, SQLite + artifacts sur PVC)
+- [x] Test complet de reproductibilité : `cluster-down` + `make all` from-scratch validé de bout en bout (auto-reseal sealed-secrets, Airflow chart pinné 2.10.5)
+- [ ] DAG `nba_orchestration` : se déploie/détecte mais scheduling bloqué sur kind local (limite connue, cf. [doc.md §11.7](docs/doc.md))
+- [ ] DVC (versionnage dataset) + DAG Airflow d'entraînement batch
 
 ---
 
 ## Documentation
 
-| Document | Audience | Quoi |
-|---|---|---|
-| [README.md](README.md) (ce fichier) | Visiteur, recruteur | Pitch, archi, quickstart, roadmap |
-| [docs/doc.md](docs/doc.md) | Ingénieur, contributeur | Référence technique profonde : pourquoi des choix, débogage, ADR |
-| [docs/key_commands.md](docs/key_commands.md) | Toi, futur dev | Cookbook chronologique : commandes exactes par vague |
-| [docs/pour_les_nuls.md](docs/pour_les_nuls.md) | Sortant de bootcamp, curieux non-infra | Vulgarisation : pourquoi chaque outil existe, en analogies |
-| [docs/PREREQUISITES.md](docs/PREREQUISITES.md) | Tout le monde | Install des outils par OS (Windows / macOS / Linux) |
-| [docs/Rapport projet orchestra nba_predictor.pdf](docs/Rapport%20projet%20orchestra%20nba_predictor.pdf) | Jury / lecteur académique | Rapport rendu pour le cours (V3) |
+| Document | Rôle |
+| --- | --- |
+| [README.md](README.md) (ce fichier) | Pitch, archi, quickstart, roadmap |
+| [docs/doc.md](https://www.google.com/search?q=docs/doc.md) | Référence technique profonde : pourquoi des choix, débogage, ADR |
+| [docs/key_commands.md](https://www.google.com/search?q=docs/key_commands.md) | Cookbook chronologique : commandes exactes par vague |
+| [docs/pour_les_nuls.md](https://www.google.com/search?q=docs/pour_les_nuls.md) | Vulgarisation : pourquoi chaque outil existe, en analogies |
+| [docs/PREREQUISITES.md](https://www.google.com/search?q=docs/PREREQUISITES.md) | Install des outils par OS (Windows / macOS / Linux) |
+| [docs/Rapport projet orchestra nba_predictor.pdf]() | Rapport rendu pour le cours (V3) |
 
 ---
 
@@ -157,7 +202,7 @@ make cluster-down        # supprime le cluster kind
 
 [MIT](LICENSE).
 
-Le code applicatif initial est © Ketsia MULAPI 2021. L'industrialisation est © Maël M. ZINSOU 2026.
+Le code applicatif initial est © Ketsia MULAPI TITA 2021. L'industrialisation est © Maël M. ZINSOU 2026.
 
 ---
 
