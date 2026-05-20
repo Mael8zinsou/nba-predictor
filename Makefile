@@ -184,8 +184,19 @@ monitoring: ## Déploie kube-prometheus-stack (Prometheus + Grafana) via Helm + 
 	@kubectl label namespace monitoring role=monitoring --overwrite >/dev/null
 	@printf "$(CYAN)> Application des NetworkPolicies monitoring...$(RESET)\n"
 	@kubectl apply -f k8s/base/networkpolicies-monitoring.yaml
-	@printf "$(GREEN)[OK] Stack monitoring deployee + ServiceMonitor NBA actif + NP appliquees.$(RESET)\n"
+	@printf "$(CYAN)> Provisioning du dashboard Grafana NBA (V5)...$(RESET)\n"
+	@kubectl create configmap grafana-dashboard-nba \
+		--namespace monitoring \
+		--from-file=nba-overview.json=k8s/base/grafana-dashboard-nba.json \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@kubectl label configmap grafana-dashboard-nba -n monitoring grafana_dashboard=1 --overwrite >/dev/null
+	@printf "$(CYAN)> Application des regles d'alerte Prometheus (V5)...$(RESET)\n"
+	@kubectl apply -f k8s/base/prometheus-rules-nba.yaml
+	@printf "$(CYAN)> Deploiement du receiver webhook de demo + AlertmanagerConfig (V5)...$(RESET)\n"
+	@kubectl apply -f k8s/base/alertmanager-webhook-demo.yaml
+	@printf "$(GREEN)[OK] Stack monitoring deployee + ServiceMonitor + dashboard + alertes + webhook + NP.$(RESET)\n"
 	@printf "  Grafana : admin / prom-operator (voir kubectl get secret -n monitoring kube-prom-grafana)\n"
+	@printf "  Dashboard : Grafana > Dashboards > 'NBA Predictor - API Overview'\n"
 
 # =============================================================================
 # Secrets (sealed-secrets controller + chiffrement des Secrets airflow/postgres)

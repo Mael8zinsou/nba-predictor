@@ -46,6 +46,10 @@ Le résultat : un pipeline reproductible, observable, sécurisé et démontrable
 - **Orchestration** : DAG `nba_orchestration` → `GET /api/nba/predict` (cross-namespace autorisé)
 - **Observabilité** : FastAPI `/metrics` → Prometheus → Grafana
 
+**Observabilité (Vague 5)** :
+- Dashboard Grafana "NBA Predictor — API Overview" **versionné en Git** (provisionné via ConfigMap, pas cliqué à la main) : débit, latence p50/p95/p99, taux d'erreur, replicas
+- 4 alertes `PrometheusRule` (latence haute, erreurs 5xx, backend down, HPA saturé) routées vers Alertmanager → receiver webhook de démo
+
 **Sécurité (Vague 4)** :
 - Image backend en `gcr.io/distroless/python3-debian12:nonroot` (~10 CVE HIGH résiduelles documentées dans `.trivyignore` vs ~250 sur l'image slim)
 - Secrets Postgres/Airflow chiffrés via [Bitnami sealed-secrets](https://github.com/bitnami-labs/sealed-secrets) (committable)
@@ -122,7 +126,8 @@ make cluster-down        # supprime le cluster kind
 - [x] NetworkPolicies zero-trust + CNI Calico via tigera-operator **— Vague 4.3**
 - [x] HorizontalPodAutoscaler backend (CPU 70%, min 2 max 5) + metrics-server + load test **— Vague 4.4**
 - [x] Ingress nginx (`nba.localhost`) + PodDisruptionBudgets backend/frontend **— Vague 4.5**
-- [ ] Observabilité avancée : Grafana dashboards versionnés, Alertmanager, Loki **— Vague 5**
+- [x] Dashboard Grafana versionné (ConfigMap) + alertes PrometheusRule routées vers Alertmanager **— Vague 5**
+- [ ] Logs centralisés (Loki) + tracing distribué (OpenTelemetry) **— Vague 5bis**
 - [ ] Pipeline d'entraînement reproductible (MLflow + DVC + fix bug `preprocess()`) **— Vague 6**
 - [ ] Présentation portfolio : Medium article, ADR, demo vidéo, GitHub Pages **— Vague 7**
 

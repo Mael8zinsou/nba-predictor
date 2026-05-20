@@ -13,7 +13,7 @@ Projet d'industrialisation d'une application ML de classification de joueurs NBA
 
 L'objectif n'est pas le modèle ML (régression logistique simple, déjà entraînée et sérialisée dans `classifier.pikl`), mais le **pipeline d'industrialisation** : conteneurisation, orchestration Kubernetes, automatisation Airflow, observabilité Prometheus/Grafana, sécurité réseau.
 
-**État au 2026-05-19** : Vagues 1 à 4.5 terminées (cluster + sécurité + secrets + NP + HPA + Ingress + PDB). V5 (observabilité avancée), V6 (Data Engineering MLflow), V7 (présentation portfolio) restantes.
+**État au 2026-05-20** : Vagues 1 à 5 terminées (cluster + sécurité + secrets + NP + HPA + Ingress + PDB + dashboard Grafana versionné + alerting PrometheusRule/Alertmanager). V5bis (Loki + OTel) optionnelle, V6 (Data Engineering MLflow), V7 (présentation portfolio) restantes.
 
 Pour tous les détails techniques (architecture, stack, conventions, ADR, bugs connus) → **[docs/doc.md](docs/doc.md)**.
 

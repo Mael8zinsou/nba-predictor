@@ -1,0 +1,95 @@
+# Receiver webhook de demonstration pour Alertmanager (V5.2).
+#
+# Probleme : montrer la chaine complete Prometheus -> Alertmanager -> receiver
+# sans dependre d'un Slack/email/PagerDuty reel (qui demanderait des secrets
+# et un compte externe).
+#
+# Solution : un pod "echo" qui logge tout POST HTTP qu'il recoit. Alertmanager
+# y route les alertes ; on lit les alertes recues dans les logs du pod :
+#   kubectl logs -n monitoring -l app=alertmanager-webhook-demo -f
+#
+# L'AlertmanagerConfig (CRD du kube-prometheus-stack) configure le routing.
+# L'operateur fusionne automatiquement ces config dans la conf Alertmanager
+# principale (selectionnees par le label release: kube-prom).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager-webhook-demo
+  namespace: monitoring
+  labels:
+    app: alertmanager-webhook-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager-webhook-demo
+  template:
+    metadata:
+      labels:
+        app: alertmanager-webhook-demo
+    spec:
+      containers:
+        - name: echo
+          # Image qui logge en JSON tout ce qu'elle recoit (requetes HTTP).
+          image: mendhak/http-https-echo:31
+          env:
+            - name: HTTP_PORT
+              value: "8080"
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "32Mi"
+            limits:
+              cpu: "50m"
+              memory: "64Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-webhook-demo
+  namespace: monitoring
+spec:
+  selector:
+    app: alertmanager-webhook-demo
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+# AlertmanagerConfig : route les alertes du namespace monitoring vers le
+# webhook de demo. L'operateur prometheus fusionne cette config (label
+# release: kube-prom) dans la configuration Alertmanager globale.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: nba-webhook-demo
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  route:
+    # Receiver par defaut pour toutes les alertes de l'app nba-backend.
+    receiver: webhook-demo
+    groupBy: ["alertname"]
+    groupWait: 10s
+    groupInterval: 30s
+    repeatInterval: 5m
+    routes:
+      - receiver: webhook-demo
+        matchers:
+          - name: app
+            value: nba-backend
+            matchType: "="
+  receivers:
+    - name: webhook-demo
+      webhookConfigs:
+        - url: "http://alertmanager-webhook-demo.monitoring.svc.cluster.local:8080/"
+          sendResolved: true

@@ -1,0 +1,76 @@
+# Regles d'alerte Prometheus pour l'app NBA (V5.2).
+#
+# Le CRD PrometheusRule est fourni par kube-prometheus-stack. L'operateur
+# Prometheus charge automatiquement toute PrometheusRule portant le label
+# `release: kube-prom` (meme mecanisme que le ServiceMonitor).
+#
+# Les alertes "firent" cote Prometheus (visibles dans /alerts) puis sont
+# routees vers Alertmanager (cf. alertmanager-config.yaml).
+#
+# Verifier le chargement :
+#   kubectl port-forward -n monitoring svc/kube-prom-kube-prometheus-prometheus 9090:9090
+#   open http://localhost:9090/alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nba-backend-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prom   # OBLIGATOIRE pour que l'operateur la charge
+spec:
+  groups:
+    - name: nba-backend.rules
+      rules:
+        # 1. Latence p95 trop haute (> 1s sur 5 min). Sur ce modele sklearn
+        # la latence normale est < 50ms, donc 1s = vraie degradation.
+        - alert: NBABackendHighLatencyP95
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(nba_api_request_latency_seconds_bucket[5m])) by (le)
+            ) > 1
+          for: 2m
+          labels:
+            severity: warning
+            app: nba-backend
+          annotations:
+            summary: "Latence p95 backend NBA elevee (> 1s)"
+            description: "La latence p95 du backend depasse 1s depuis 2 min (valeur: {{ $value | humanizeDuration }})."
+
+        # 2. Taux d'erreur 5xx > 5% sur 5 min.
+        - alert: NBABackendHighErrorRate
+          expr: |
+            100 * sum(rate(nba_api_requests_total{http_status=~"5.."}[5m]))
+              / clamp_min(sum(rate(nba_api_requests_total[5m])), 1) > 5
+          for: 2m
+          labels:
+            severity: critical
+            app: nba-backend
+          annotations:
+            summary: "Taux d'erreur 5xx backend NBA > 5%"
+            description: "Le backend renvoie plus de 5% d'erreurs 5xx depuis 2 min (valeur: {{ $value | printf \"%.1f\" }}%)."
+
+        # 3. Aucun pod backend Ready (service down).
+        - alert: NBABackendDown
+          expr: |
+            sum(kube_deployment_status_replicas_ready{namespace="nba", deployment="nba-backend"}) < 1
+          for: 1m
+          labels:
+            severity: critical
+            app: nba-backend
+          annotations:
+            summary: "Backend NBA indisponible (0 replica Ready)"
+            description: "Aucun pod backend nba n'est Ready depuis 1 min. Le service est down."
+
+        # 4. HPA au maximum de replicas (capacite saturee, signal de scaling vertical
+        # ou d'augmentation de maxReplicas a envisager).
+        - alert: NBABackendHPAMaxedOut
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{namespace="nba", horizontalpodautoscaler="nba-backend"}
+              >= kube_horizontalpodautoscaler_spec_max_replicas{namespace="nba", horizontalpodautoscaler="nba-backend"}
+          for: 5m
+          labels:
+            severity: warning
+            app: nba-backend
+          annotations:
+            summary: "HPA backend NBA au maximum de replicas"
+            description: "Le HPA tourne a maxReplicas depuis 5 min. Envisager d'augmenter maxReplicas ou les resources."

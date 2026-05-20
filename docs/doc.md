@@ -21,10 +21,13 @@
   - [6.4 Trivy et politique `.trivyignore`](#64-trivy-et-politique-trivyignore)
   - [6.5 HorizontalPodAutoscaler + metrics-server (V4.4)](#65-horizontalpodautoscaler--metrics-server-v44)
   - [6.6 Ingress + PodDisruptionBudgets (V4.5)](#66-ingress--poddisruptionbudgets-v45)
-- [7. CI/CD GitHub Actions](#7-cicd-github-actions)
-- [8. Tests](#8-tests)
-- [9. Bugs connus et dette technique](#9-bugs-connus-et-dette-technique)
-- [10. Décisions architecturales (mini-ADR)](#10-décisions-architecturales-mini-adr)
+- [7. Observabilité avancée (Vague 5)](#7-observabilité-avancée-vague-5)
+  - [7.1 Dashboard Grafana versionné](#71-dashboard-grafana-versionné)
+  - [7.2 Alerting : PrometheusRule + Alertmanager](#72-alerting--prometheusrule--alertmanager)
+- [8. CI/CD GitHub Actions](#8-cicd-github-actions)
+- [9. Tests](#9-tests)
+- [10. Bugs connus et dette technique](#10-bugs-connus-et-dette-technique)
+- [11. Décisions architecturales (mini-ADR)](#11-décisions-architecturales-mini-adr)
 
 ---
 
@@ -206,6 +209,9 @@ nba_predictor/
 │   │   ├── networkpolicies-nba.yaml          # V4.3 : default-deny + allows
 │   │   ├── networkpolicies-airflow.yaml      # V4.3
 │   │   ├── networkpolicies-monitoring.yaml   # V4.3
+│   │   ├── grafana-dashboard-nba.json        # V5 : dashboard versionné (ConfigMap)
+│   │   ├── prometheus-rules-nba.yaml         # V5 : 4 alertes PrometheusRule
+│   │   ├── alertmanager-webhook-demo.yaml    # V5 : receiver webhook + AlertmanagerConfig
 │   │   ├── airflow-credentials-sealedsecret.yaml  # V4.1 : 3 SealedSecret committés
 │   │   └── kustomization.yaml
 │   ├── overlays/
@@ -638,7 +644,82 @@ nba-frontend                      1               N/A               0   ← 1 re
 
 ---
 
-## 7. CI/CD GitHub Actions
+## 7. Observabilité avancée (Vague 5)
+
+L'installation de base (`kube-prometheus-stack`) fournit Prometheus + Grafana + Alertmanager + l'opérateur. La Vague 5 ajoute le **contenu métier** : un dashboard versionné et des alertes spécifiques à l'app NBA.
+
+### 7.1 Dashboard Grafana versionné
+
+**Objectif** : un dashboard NBA défini en Git (source de vérité), pas cliqué à la main dans l'UI (perdu au redéploiement).
+
+**Mécanisme : sidecar auto-discovery**
+
+Le chart Grafana embarque un conteneur sidecar `grafana-sc-dashboard` qui surveille **tous les namespaces** (`NAMESPACE=ALL`) et charge automatiquement tout ConfigMap portant le label `grafana_dashboard: "1"`. Le JSON du dashboard est écrit dans `/tmp/dashboards/` et Grafana le recharge à chaud.
+
+**Workflow** :
+```bash
+# Le dashboard est un JSON committé : k8s/base/grafana-dashboard-nba.json
+# On le transforme en ConfigMap + label (cf. cible make monitoring) :
+kubectl create configmap grafana-dashboard-nba -n monitoring \
+  --from-file=nba-overview.json=k8s/base/grafana-dashboard-nba.json \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl label configmap grafana-dashboard-nba -n monitoring grafana_dashboard=1 --overwrite
+```
+
+**Le dashboard "NBA Predictor — API Overview"** (uid `nba-predictor-api`) contient 5 panels :
+| Panel | Type | Query PromQL (résumé) |
+|---|---|---|
+| Débit requêtes /api (req/s) | timeseries | `sum(rate(nba_api_requests_total[1m])) by (endpoint)` |
+| Latence p50/p95/p99 | timeseries | `histogram_quantile(0.95, sum(rate(nba_api_request_latency_seconds_bucket[5m])) by (le, endpoint))` |
+| Taux d'erreur 5xx (%) | stat (seuils) | `100 * rate(5xx) / rate(total)` |
+| Replicas backend Ready | stat (seuils) | `kube_deployment_status_replicas_ready{deployment="nba-backend"}` |
+| Requêtes cumulées par status | timeseries | `sum(nba_api_requests_total) by (http_status)` |
+
+> **Note** : le dashboard utilise une variable `${DS_PROMETHEUS}` de type datasource, donc il fonctionne quel que soit le nom interne de la datasource Prometheus (pas de hardcode d'uid).
+
+### 7.2 Alerting : PrometheusRule + Alertmanager
+
+**Objectif** : être prévenu automatiquement quand l'app dérive (latence, erreurs, indisponibilité).
+
+**Mécanisme** : le CRD `PrometheusRule` (label `release: kube-prom` obligatoire, comme le ServiceMonitor) est chargé par l'opérateur Prometheus. Les alertes "firent" puis sont routées vers Alertmanager.
+
+**4 alertes définies** (`k8s/base/prometheus-rules-nba.yaml`) :
+| Alerte | Condition | `for` | Sévérité |
+|---|---|---|---|
+| `NBABackendHighLatencyP95` | p95 latence > 1s | 2m | warning |
+| `NBABackendHighErrorRate` | taux 5xx > 5% | 2m | critical |
+| `NBABackendDown` | 0 replica Ready | 1m | critical |
+| `NBABackendHPAMaxedOut` | HPA à maxReplicas | 5m | warning |
+
+**Chaîne de routage** :
+
+```mermaid
+flowchart LR
+    PR[PrometheusRule<br/>4 alertes] -->|opérateur charge| P[Prometheus<br/>évalue les règles]
+    P -->|alerte firing| AM[Alertmanager<br/>dédoublonne, groupe]
+    AM -->|AlertmanagerConfig<br/>matcher app=nba-backend| W[webhook-demo<br/>pod echo qui logge]
+    style W fill:#cfc
+```
+
+**Receiver webhook de démo** : pour montrer la chaîne complète sans dépendre d'un Slack/email réel, on déploie un pod `mendhak/http-https-echo` qui logge tout POST reçu. Un `AlertmanagerConfig` (CRD) route les alertes `app=nba-backend` vers ce pod. On lit les alertes reçues dans :
+```bash
+kubectl logs -n monitoring -l app=alertmanager-webhook-demo -f
+```
+
+**Validation effectuée** (en supprimant temporairement le HPA + scale à 0) :
+1. `NBABackendDown` passe `pending` → `firing` après ~50s (le `for: 1m`)
+2. Alertmanager reçoit l'alerte (`active`, severity critical)
+3. Le webhook reçoit la notification `firing`
+4. Après restauration (replicas + HPA), le webhook reçoit la notification `resolved` (grâce à `sendResolved: true`)
+
+> **Note d'opération** : le password admin Grafana n'est pas toujours `prom-operator` (il peut être régénéré par le chart). Le récupérer via :
+> ```bash
+> kubectl get secret kube-prom-grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d
+> ```
+
+---
+
+## 8. CI/CD GitHub Actions
 
 ### 7.1 Trois workflows
 
@@ -693,7 +774,7 @@ kind load image-archive /tmp/nba-backend.tar --name nba-predictor
 
 ---
 
-## 8. Tests
+## 9. Tests
 
 **33 tests pytest** au total, exécutables via `pytest` depuis la racine :
 
@@ -713,7 +794,7 @@ pytest --cov=nba-api --cov-report=term-missing
 
 ---
 
-## 9. Bugs connus et dette technique
+## 10. Bugs connus et dette technique
 
 ### 9.1 `preprocess()` Min-Max global cassé sur vecteur unique
 
@@ -757,7 +838,7 @@ Le chart Airflow demande un PVC ReadWriteMany pour les logs (4 pods qui écriven
 
 ---
 
-## 10. Décisions architecturales (mini-ADR)
+## 11. Décisions architecturales (mini-ADR)
 
 ### ADR-1 : kind plutôt que Minikube
 
@@ -902,6 +983,23 @@ Calibration : `requests: 100m` calibré après mesure (idle ~3m), threshold 70% 
 **Justification** : Ingress = abstraction L7 standard Kubernetes. ingress-nginx est le contrôleur de référence (le plus déployé en prod). Le manifest "kind-friendly" officiel évite MetalLB. Pattern "single entry point" plus représentatif d'une vraie prod (un Ingress devant N services, TLS centralisé, WAF, rate-limiting).
 
 **Trade-off** : demande de gérer la résolution DNS `nba.localhost` côté host (entrée `/etc/hosts`), accepté pour ce contexte local. En prod, ce serait une vraie zone DNS pointant vers le LB cloud.
+
+---
+
+### ADR-11 : Dashboard versionné via ConfigMap plutôt que clic UI ou Grafana provisioning natif (V5)
+
+**Contexte** : avoir un dashboard NBA reproductible, en Git.
+
+**Options** :
+- Créer le dashboard dans l'UI Grafana (perdu si le pod est recréé sans persistance)
+- Provisioning natif Grafana (`provisioning/dashboards/*.yaml` + montage de fichiers)
+- **ConfigMap + sidecar auto-discovery** (label `grafana_dashboard=1`)
+
+**Décision** : **ConfigMap + sidecar** (V5).
+
+**Justification** : le chart kube-prometheus-stack embarque déjà le sidecar `grafana-sc-dashboard` qui scanne tous les namespaces. Pas de config Grafana à toucher, pas de volume à monter : on commit un JSON, on en fait un ConfigMap labellé, et le dashboard apparaît. GitOps-friendly, zéro clic manuel, fonctionne en CI.
+
+**Receiver webhook de démo** : pour l'alerting, on route vers un pod echo plutôt qu'un vrai Slack/email afin de démontrer la chaîne complète sans secret externe ni compte tiers. En prod, on remplacerait le `webhookConfigs` par `slackConfigs`/`emailConfigs`/`pagerdutyConfigs` (avec les secrets en SealedSecret, cf. §6.2).
 
 ---
 

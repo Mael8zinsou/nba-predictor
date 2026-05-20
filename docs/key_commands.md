@@ -19,6 +19,7 @@
 - [Vague 4.3 — NetworkPolicies + Calico](#vague-43--networkpolicies--calico)
 - [Vague 4.4 — HPA + metrics-server](#vague-44--hpa--metrics-server)
 - [Vague 4.5 — Ingress + PDB](#vague-45--ingress--pdb)
+- [Vague 5 — Dashboard + Alerting](#vague-5--dashboard--alerting)
 - [Opérations quotidiennes](#opérations-quotidiennes)
 - [Dépannage](#dépannage)
 
@@ -627,6 +628,90 @@ make all   # enchaîne tout dans le bon ordre
 
 ---
 
+## Vague 5 — Dashboard + Alerting
+
+### Déployer le dashboard + les alertes (inclus dans make monitoring)
+
+```bash
+make monitoring
+# Inclut désormais :
+#   - ConfigMap grafana-dashboard-nba (label grafana_dashboard=1)
+#   - PrometheusRule nba-backend-alerts (4 alertes)
+#   - webhook-demo + AlertmanagerConfig
+```
+
+### Vérifier le dashboard dans Grafana
+
+```bash
+# Récupérer le password admin (PAS forcément 'prom-operator', le chart le régénère)
+kubectl get secret kube-prom-grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d
+
+make port-forward-grafana   # http://localhost:3000
+# Dashboards > "NBA Predictor — API Overview"
+
+# Ou via l'API
+PASS=$(kubectl get secret kube-prom-grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d)
+curl -s -u "admin:$PASS" "http://localhost:3000/api/dashboards/uid/nba-predictor-api" | python -m json.tool
+```
+
+### Vérifier que le sidecar a chargé le dashboard
+
+```bash
+GRAFANA=$(kubectl get pod -n monitoring -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}')
+kubectl logs -n monitoring $GRAFANA -c grafana-sc-dashboard --tail=10 | grep -i nba
+# "Writing /tmp/dashboards/nba-overview.json"
+```
+
+### Vérifier que les règles d'alerte sont chargées
+
+```bash
+kubectl get prometheusrule -n monitoring nba-backend-alerts
+
+# Via l'API Prometheus
+kubectl port-forward -n monitoring svc/kube-prom-kube-prometheus-prometheus 9090:9090 &
+curl -sf "http://localhost:9090/api/v1/rules" | python -c "
+import json, sys
+d = json.load(sys.stdin)
+for g in d['data']['groups']:
+    if 'nba' in g['name'].lower():
+        for r in g['rules']:
+            print(f'{r[\"name\"]} [{r.get(\"state\")}]')"
+# Au repos : 4 alertes [inactive]
+```
+
+### Déclencher une alerte pour démo (NBABackendDown)
+
+```bash
+# 1. Supprimer le HPA (sinon il re-scale) + scaler à 0
+kubectl delete hpa nba-backend -n nba
+kubectl scale deployment/nba-backend -n nba --replicas=0
+
+# 2. Attendre ~1min30 (l'alerte a un 'for: 1m')
+kubectl port-forward -n monitoring svc/kube-prom-kube-prometheus-prometheus 9090:9090 &
+# Observer le passage pending -> firing dans http://localhost:9090/alerts
+
+# 3. Vérifier qu'Alertmanager a reçu
+kubectl port-forward -n monitoring svc/kube-prom-kube-prometheus-alertmanager 9093:9093 &
+curl -sf "http://localhost:9093/api/v2/alerts" | python -c "import json,sys; print([a['labels']['alertname'] for a in json.load(sys.stdin)])"
+
+# 4. Vérifier que le webhook a reçu la notification
+kubectl logs -n monitoring -l app=alertmanager-webhook-demo --tail=100 | grep NBABackendDown
+
+# 5. RESTAURER (recrée backend + HPA depuis Kustomize)
+kubectl apply -k k8s/overlays/dev
+kubectl rollout status deployment/nba-backend -n nba
+# Le webhook reçoit alors la notification 'resolved' (sendResolved: true)
+```
+
+### Suivre les alertes reçues par le webhook en temps réel
+
+```bash
+kubectl logs -n monitoring -l app=alertmanager-webhook-demo -f
+# Chaque POST d'Alertmanager est loggé en JSON (alertname, status, labels...)
+```
+
+---
+
 ## Opérations quotidiennes
 
 ### Voir le status global
@@ -829,6 +914,42 @@ kubectl label namespace monitoring role=monitoring --overwrite
 
 # 3. Prometheus n'a pas reload sa config (rare)
 kubectl rollout restart statefulset/prometheus-kube-prom-kube-prometheus-prometheus -n monitoring
+```
+
+### Dashboard NBA n'apparaît pas dans Grafana
+
+```bash
+# 1. Le ConfigMap a-t-il le bon label ?
+kubectl get configmap grafana-dashboard-nba -n monitoring --show-labels
+# Doit contenir grafana_dashboard=1
+
+# 2. Le sidecar l'a-t-il chargé ?
+GRAFANA=$(kubectl get pod -n monitoring -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}')
+kubectl logs -n monitoring $GRAFANA -c grafana-sc-dashboard --tail=20 | grep -i nba
+
+# 3. Forcer un reload (supprimer/recréer le ConfigMap)
+kubectl delete configmap grafana-dashboard-nba -n monitoring
+make monitoring
+```
+
+### Login Grafana refusé (mot de passe)
+
+```bash
+# Le password n'est PAS toujours 'prom-operator' — le récupérer :
+kubectl get secret kube-prom-grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d
+```
+
+### Alerte ne fire pas
+
+```bash
+# 1. PrometheusRule chargée ? (label release: kube-prom obligatoire)
+kubectl get prometheusrule nba-backend-alerts -n monitoring -o yaml | grep -A2 labels
+
+# 2. La query PromQL renvoie-t-elle des données ?
+# Tester dans http://localhost:9090/graph la query de l'alerte
+
+# 3. AlertmanagerConfig chargé ? (label release: kube-prom aussi)
+kubectl get alertmanagerconfig -n monitoring
 ```
 
 ### DAG `nba_orchestration` n'apparaît pas dans Airflow UI
