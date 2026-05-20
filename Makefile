@@ -50,7 +50,7 @@ RESET  := \033[0m
 .DEFAULT_GOAL := help
 .PHONY: help all cluster-up cluster-down build deploy nba airflow monitoring sync-dags \
         calico-install network-policies metrics-server-install ingress-install \
-        sealed-secrets-install seal-secrets apply-sealed-secrets mlflow train \
+        sealed-secrets-install seal-secrets apply-sealed-secrets _wait-secrets _check-secrets mlflow train \
         load-test port-forward-app port-forward-airflow port-forward-grafana port-forward-mlflow \
         logs-backend logs-frontend logs-airflow status destroy clean-images
 
@@ -246,18 +246,57 @@ seal-secrets: ## Genere les SealedSecret depuis k8s/secrets/*.unsealed.yaml (nec
 	@printf "$(GREEN)[OK] SealedSecret genere : k8s/base/airflow-credentials-sealedsecret.yaml$(RESET)\n"
 	@printf "  Verifier le diff puis 'git add k8s/base/airflow-credentials-sealedsecret.yaml'\n"
 
-apply-sealed-secrets: ## Applique les SealedSecret committes (controller deja installe requis)
+# apply-sealed-secrets applique les SealedSecret committes puis, si un secret
+# reste non dechiffre, c'est que la cle du controller ne correspond plus aux
+# SealedSecret committes (cluster recree => nouvelle cle, cf. doc.md). On
+# re-scelle alors automatiquement depuis le fichier unsealed local (gitignore)
+# si kubeseal est dispo, puis on re-applique. Idempotent : sur un cluster dont
+# la cle correspond deja, le bloc de re-seal ne s'execute jamais.
+apply-sealed-secrets: ## Applique les SealedSecret committes + auto-reseal si la cle du controller a change
 	@printf "$(CYAN)> Application des SealedSecret committes...$(RESET)\n"
 	@kubectl get namespace airflow >/dev/null 2>&1 || kubectl create namespace airflow
 	@kubectl apply -f k8s/base/airflow-credentials-sealedsecret.yaml
-	@printf "$(CYAN)> Attente du dechiffrement par le controller...$(RESET)\n"
-	@for secret in airflow-postgres-secret airflow-metadata-secret airflow-admin-secret; do \
-		for i in $$(seq 1 30); do \
-			if kubectl get secret $$secret -n airflow >/dev/null 2>&1; then \
-				printf "$(GREEN)  [OK] $$secret dechiffre$(RESET)\n"; break; \
-			fi; \
-			sleep 1; \
-		done; \
+	@printf "$(CYAN)> Attente du dechiffrement par le controller (max 20s)...$(RESET)\n"
+	@$(MAKE) --no-print-directory _wait-secrets TIMEOUT=20 2>/dev/null || true
+	@if ! $(MAKE) --no-print-directory _check-secrets >/dev/null 2>&1; then \
+		printf "$(YELLOW)[!] SealedSecret non dechiffrables : la cle du controller a change (cluster recree).$(RESET)\n"; \
+		if command -v kubeseal >/dev/null 2>&1 && [ -f k8s/secrets/airflow-credentials.unsealed.yaml ]; then \
+			printf "$(CYAN)> Auto-reseal depuis k8s/secrets/airflow-credentials.unsealed.yaml...$(RESET)\n"; \
+			kubeseal --controller-namespace=kube-system --controller-name=sealed-secrets-controller --format=yaml \
+				< k8s/secrets/airflow-credentials.unsealed.yaml > k8s/base/airflow-credentials-sealedsecret.yaml; \
+			kubectl apply -f k8s/base/airflow-credentials-sealedsecret.yaml; \
+			printf "$(CYAN)> Re-attente du dechiffrement (max 30s)...$(RESET)\n"; \
+			$(MAKE) --no-print-directory _wait-secrets TIMEOUT=30; \
+			printf "$(YELLOW)  Note : k8s/base/airflow-credentials-sealedsecret.yaml a ete re-scelle.$(RESET)\n"; \
+			printf "$(YELLOW)  'git add' ce fichier pour committer les SealedSecret de ce cluster.$(RESET)\n"; \
+		else \
+			printf "$(YELLOW)[!] Auto-reseal impossible :$(RESET)\n"; \
+			command -v kubeseal >/dev/null 2>&1 || printf "      - kubeseal CLI absent (cf. make seal-secrets)\n"; \
+			[ -f k8s/secrets/airflow-credentials.unsealed.yaml ] || printf "      - k8s/secrets/airflow-credentials.unsealed.yaml absent (fichier gitignore)\n"; \
+			printf "$(YELLOW)    Lancer 'make seal-secrets' puis relancer, ou restaurer le fichier unsealed.$(RESET)\n"; \
+			exit 1; \
+		fi; \
+	fi
+	@$(MAKE) --no-print-directory _check-secrets >/dev/null 2>&1 \
+		&& printf "$(GREEN)[OK] Les 3 secrets airflow sont dechiffres.$(RESET)\n" \
+		|| { printf "$(YELLOW)[!] Echec : secrets toujours non dechiffres apres re-seal.$(RESET)\n"; exit 1; }
+
+# Helpers internes (non listes dans make help) pour la gestion des secrets.
+_wait-secrets:
+	@for i in $$(seq 1 $${TIMEOUT:-20}); do \
+		if $(MAKE) --no-print-directory _check-secrets >/dev/null 2>&1; then \
+			for s in airflow-postgres-secret airflow-metadata-secret airflow-admin-secret; do \
+				printf "$(GREEN)  [OK] $$s dechiffre$(RESET)\n"; \
+			done; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	exit 1
+
+_check-secrets:
+	@for s in airflow-postgres-secret airflow-metadata-secret airflow-admin-secret; do \
+		kubectl get secret $$s -n airflow >/dev/null 2>&1 || exit 1; \
 	done
 
 # =============================================================================

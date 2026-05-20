@@ -408,7 +408,16 @@ graph LR
 3. `git add k8s/base/airflow-credentials-sealedsecret.yaml && git commit`
 4. `make apply-sealed-secrets` (auto via `make airflow`) → controller déchiffre → Secrets K8s prêts
 
-**Limite critique** : si on **réinstalle** le controller (master key régénérée), tous les SealedSecret existants deviennent inutilisables. Sauvegarder la master key offline :
+**Limite critique** : si on **réinstalle** le controller (master key régénérée — typiquement après `make cluster-down` puis `make all`), tous les SealedSecret committés deviennent indéchiffrables (`no key could decrypt secret`). Le pod `airflow-postgres` reste alors en `CreateContainerConfigError` (`secret not found`) et `make all` échoue à l'étape `airflow`.
+
+**Auto-reseal (depuis le test de reproductibilité du 2026-05-20)** : `make apply-sealed-secrets` (appelé par `make airflow`) détecte ce cas et **re-scelle automatiquement** depuis `k8s/secrets/airflow-credentials.unsealed.yaml` si le fichier est présent et `kubeseal` disponible :
+1. apply des SealedSecret committés + attente 20s
+2. si un secret reste non déchiffré → re-seal auto avec la clé du controller courant → ré-apply → ré-attente
+3. si auto-reseal impossible (kubeseal absent OU fichier unsealed absent) → message explicite + `exit 1`
+
+`make all` redevient ainsi reproductible from-scratch **sur la machine de dev** (qui possède le fichier unsealed gitignoré). Le fichier `airflow-credentials-sealedsecret.yaml` re-scellé est local au cluster ; le committer est optionnel (message le rappelle).
+
+**Pour la portabilité prod / autre machine** : sauvegarder la master key offline et la ré-injecter avant recréation, plutôt que de dépendre du re-seal :
 ```bash
 kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key \
   -o yaml > sealed-secrets-master.key
