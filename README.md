@@ -127,7 +127,8 @@ make cluster-down        # supprime le cluster kind
 - [x] HorizontalPodAutoscaler backend (CPU 70%, min 2 max 5) + metrics-server + load test **— Vague 4.4**
 - [x] Ingress nginx (`nba.localhost`) + PodDisruptionBudgets backend/frontend **— Vague 4.5**
 - [x] Dashboard Grafana versionné (ConfigMap) + alertes PrometheusRule routées vers Alertmanager **— Vague 5**
-- [ ] Pipeline d'entraînement reproductible (MLflow + DVC + fix bug `preprocess()`) **— Vague 6**
+- [x] Pipeline d'entraînement reproductible (`training/train.py` + MLflow tracking) + fix bug `preprocess()` (scaler sérialisé) **— Vague 6**
+- [ ] Serveur MLflow déployé dans le cluster (namespace `mlflow`) **— Vague 6 (in progress)**
 - [ ] Présentation portfolio : Medium article, ADR, demo vidéo, GitHub Pages **— Vague 7**
 
 ---

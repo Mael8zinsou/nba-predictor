@@ -6,7 +6,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
-from sklearn.preprocessing import MinMaxScaler
 
 
 class NBAPredictor:
@@ -18,10 +17,22 @@ class NBAPredictor:
     - Prédiction par nom dans un CSV
     """
 
-    def __init__(self, model_path: str = "static/model/classifier.pikl") -> None:
-        """Charge une seule fois le modèle sérialisé pickle."""
+    def __init__(
+        self,
+        model_path: str = "static/model/classifier.pikl",
+        scaler_path: str = "static/model/scaler.pikl",
+    ) -> None:
+        """Charge une seule fois le modèle + le scaler sérialisés (Vague 6).
+
+        Le scaler (MinMaxScaler fitté sur le dataset d'entraînement) est
+        désormais chargé au démarrage, ce qui corrige le bug historique de
+        preprocess() (Min-Max global sur le vecteur unique) et évite de
+        re-fitter un scaler à chaque requête (cf. predict_by_name avant V6).
+        """
         with open(model_path, "rb") as f:
             self.model: Any = pickle.load(f)  # noqa: S301 -- artefact interne
+        with open(scaler_path, "rb") as f:
+            self.scaler: Any = pickle.load(f)  # noqa: S301 -- artefact interne
 
     @staticmethod
     def build_params(
@@ -73,40 +84,40 @@ class NBAPredictor:
             dtype=float,
         )
 
-    @staticmethod
-    def preprocess(arr: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Min-Max scaling sur les valeurs du tableau passé.
+    def preprocess(self, arr: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Applique le MinMaxScaler entraîné (par-feature) au tableau passé.
 
-        BUG CONNU : sur un vecteur unique (route /api/nba/predict), calcule
-        min/max sur les 19 features du vecteur seul, pas sur les statistiques
-        du dataset d'entraînement. Voir project_known_bugs.md — fix prévu en
-        Vague 6 avec un MinMaxScaler entraîné et sérialisé via MLflow.
+        FIX Vague 6 : on applique le scaler fitté sur le dataset d'entraînement
+        (chargé au __init__), feature par feature. Chaque colonne est normalisée
+        avec le (min, max) de CETTE feature dans le dataset, peu importe le
+        nombre de lignes en entrée (1 vecteur ou N).
+
+        Remplace l'ancien comportement bugué : un Min-Max GLOBAL sur l'ensemble
+        des valeurs du vecteur (qui écrasait les features de petite échelle
+        derrière la feature dominante, typiquement GP). Le scaler garantit la
+        cohérence avec la façon dont le modèle a été entraîné.
         """
-        minimum = arr.min()
-        maximum = arr.max()
-        denom = maximum - minimum if maximum != minimum else 1.0
-        return (arr - minimum) / denom  # type: ignore[no-any-return]
+        return self.scaler.transform(arr)  # type: ignore[no-any-return]
 
     def predict_vector(self, vect: NDArray[np.float64]) -> dict[str, list[float]]:
         """Renvoie la prédiction brute pour un ou plusieurs vecteurs déjà préprocessés."""
         return {"decision": self.model.predict(vect).tolist()}
 
     def predict_by_name(self, name: str) -> dict[str, Any]:
-        """Recherche le joueur dans le CSV, normalise le dataset complet, renvoie la décision.
+        """Recherche le joueur dans le CSV de référence, renvoie la décision.
 
-        Approche correcte au niveau du scaling (fit sur tout le dataset),
-        mais inefficace : le scaler est re-fitté à chaque requête. À optimiser
-        en Vague 6 avec un scaler pré-entraîné chargé au démarrage.
+        Vague 6 : utilise le scaler pré-entraîné (self.scaler) au lieu de
+        re-fitter un MinMaxScaler à chaque requête. Plus rapide et cohérent
+        avec preprocess() (même scaler partout).
         """
         df = pd.read_csv("static/data/nba_logreg.csv")
 
         names = df["Name"].tolist()
         df_vals = df.drop(["TARGET_5Yrs", "Name"], axis=1).fillna(0).values
 
-        # Normalisation MinMax sur le dataset complet (fit + transform)
-        X = MinMaxScaler().fit_transform(df_vals)
+        x = self.scaler.transform(df_vals)
 
-        preds = self.model.predict(X)
+        preds = self.model.predict(x)
         frame = pd.DataFrame({"names": names, "prediction": preds})
         found = frame[frame["names"] == name]
 

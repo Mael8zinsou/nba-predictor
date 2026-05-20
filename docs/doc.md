@@ -24,10 +24,14 @@
 - [7. Observabilité avancée (Vague 5)](#7-observabilité-avancée-vague-5)
   - [7.1 Dashboard Grafana versionné](#71-dashboard-grafana-versionné)
   - [7.2 Alerting : PrometheusRule + Alertmanager](#72-alerting--prometheusrule--alertmanager)
-- [8. CI/CD GitHub Actions](#8-cicd-github-actions)
-- [9. Tests](#9-tests)
-- [10. Bugs connus et dette technique](#10-bugs-connus-et-dette-technique)
-- [11. Décisions architecturales (mini-ADR)](#11-décisions-architecturales-mini-adr)
+- [8. Pipeline d'entraînement ML (Vague 6)](#8-pipeline-dentraînement-ml-vague-6)
+  - [8.1 Le fix preprocess() + scaler sérialisé](#81-le-fix-preprocess--scaler-sérialisé)
+  - [8.2 Script d'entraînement reproductible + MLflow](#82-script-dentraînement-reproductible--mlflow)
+  - [8.3 Serveur MLflow dans le cluster](#83-serveur-mlflow-dans-le-cluster)
+- [9. CI/CD GitHub Actions](#9-cicd-github-actions)
+- [10. Tests](#10-tests)
+- [11. Bugs connus et dette technique](#11-bugs-connus-et-dette-technique)
+- [12. Décisions architecturales (mini-ADR)](#12-décisions-architecturales-mini-adr)
 
 ---
 
@@ -188,8 +192,11 @@ nba_predictor/
 │   ├── Dockerfile                    # Multi-stage distroless (V4.2)
 │   ├── .dockerignore
 │   └── static/
-│       ├── model/classifier.pikl     # Modèle sérialisé (sklearn 0.24.1, à régénérer en V6)
-│       └── data/nba_logreg.csv       # Dataset de référence pour predict_by_name
+│       ├── model/
+│       │   ├── classifier.pikl              # Modèle (sklearn 1.5.1, ré-entraîné V6)
+│       │   ├── scaler.pikl                   # MinMaxScaler fitté (V6, fix preprocess)
+│       │   └── classifier.legacy-0.24.1.pikl # Backup ancien modèle (rollback)
+│       └── data/nba_logreg.csv       # Dataset de référence (1340 joueurs)
 ├── nba-web/                          # Frontend statique
 │   ├── index.html                    # Bootstrap + jQuery, chemins relatifs /api/*
 │   ├── nginx.conf                    # Reverse-proxy /api/* → nba-backend-svc:8080
@@ -227,6 +234,9 @@ nba_predictor/
 │   └── airflow-postgres.yaml         # Postgres dédié (envFrom: secretRef SealedSecret)
 ├── dags/                             # DAGs Airflow
 │   └── nba_orchestration.py          # Appel quotidien GET /api/nba/predict
+├── training/                         # V6 : pipeline d'entraînement ML
+│   ├── train.py                      # Entraînement reproductible + MLflow tracking
+│   └── requirements.txt              # mlflow, scikit-learn, pandas, numpy
 ├── scripts/
 │   └── load-test.sh                  # V4.4 : 50 workers x 60s pour démo HPA
 ├── airflow-values.yaml               # Values Helm (LocalExecutor, metadataSecretName)
@@ -719,7 +729,51 @@ kubectl logs -n monitoring -l app=alertmanager-webhook-demo -f
 
 ---
 
-## 8. CI/CD GitHub Actions
+## 8. Pipeline d'entraînement ML (Vague 6)
+
+Le tournant "Data Engineer" du projet : un pipeline d'entraînement **reproductible** qui corrige la dette ML historique et tracke les expériences.
+
+### 8.1 Le fix preprocess() + scaler sérialisé
+
+**Le problème historique** (cf. §11.1) : `preprocess()` faisait un Min-Max **global** sur le vecteur unique (les 19 features mélangées), au lieu d'un scaling **par-feature** fitté sur le dataset. La feature `GP` (50-82) écrasait les autres (0-30). Résultat : `/api/nba/predict` (stats individuelles) et `/api/nba/info` (lookup CSV) pouvaient diverger sur le même joueur.
+
+**Le fix** :
+1. `training/train.py` fit un `MinMaxScaler` sur le dataset d'entraînement et le sérialise (`nba-api/static/model/scaler.pikl`).
+2. `NBAPredictor.__init__` charge le scaler en plus du modèle.
+3. `preprocess()` (désormais méthode d'instance) applique `self.scaler.transform(arr)` — scaling par-feature, cohérent avec l'entraînement.
+4. `predict_by_name()` utilise le même scaler (plus de re-fit par requête).
+
+**Invariant critique** : l'ordre des 19 features dans `train.py` (`FEATURE_ORDER`) doit être **identique** à celui de `build_params()` dans `functions.py` (finissant par `TOV`). Le modèle et l'API partagent cet ordre.
+
+**Validation** : les deux routes donnent des résultats identiques (testé 5/5 joueurs). Le test ex-xfail `test_single_vector_uses_dataset_statistics` passe au vert. Suite : 33 passed, 0 xfail.
+
+> **Subtilité** : le scaler est fitté sur un **array numpy** (`df[...].to_numpy()`), pas un DataFrame. Sinon il enregistre `feature_names_in_` et émet un `UserWarning` à chaque `transform` sur array nu (ce que fait l'API). `pyproject.toml` a `filterwarnings = error`, donc ce warning ferait échouer les tests.
+
+### 8.2 Script d'entraînement reproductible + MLflow
+
+`training/train.py` :
+- **Reproductible** : `random_state=42`, split train/test 80/20 stratifié. Même dataset → même modèle.
+- **Évaluation honnête** : métriques calculées sur le **test set** (20% jamais vus), pas sur le train. Accuracy ~0.72, F1 ~0.79, ROC-AUC ~0.77.
+- **MLflow tracking** : params (modèle, max_iter, random_state, n features…), métriques (accuracy/precision/recall/f1/roc_auc), et le modèle loggé comme artefact.
+
+```bash
+# Entraînement local (MLflow en mode fichier ./mlruns)
+pip install -r training/requirements.txt
+python training/train.py
+
+# Vers un serveur MLflow distant
+MLFLOW_TRACKING_URI=http://localhost:5000 python training/train.py
+```
+
+`mlruns/` est gitignored (les runs ne sont pas committés). Seuls `classifier.pikl` + `scaler.pikl` sont versionnés (l'API en a besoin pour démarrer).
+
+### 8.3 Serveur MLflow dans le cluster
+
+> _Section à compléter (V6bis : déploiement MLflow tracking server dans le namespace `mlflow`)._
+
+---
+
+## 9. CI/CD GitHub Actions
 
 ### 7.1 Trois workflows
 
@@ -774,13 +828,13 @@ kind load image-archive /tmp/nba-backend.tar --name nba-predictor
 
 ---
 
-## 9. Tests
+## 10. Tests
 
 **33 tests pytest** au total, exécutables via `pytest` depuis la racine :
 
 | Fichier | Nb tests | Couvre |
 |---|---|---|
-| `tests/test_predictor.py` | 17 (dont 1 xfail strict) | Classe `NBAPredictor` : build_params, preprocess, predict_vector, predict_by_name, predict_dataset, edge cases |
+| `tests/test_predictor.py` | 18 | Classe `NBAPredictor` : build_params, preprocess (scaler V6), predict_vector, predict_by_name, predict_dataset, edge cases |
 | `tests/test_api.py` | 15 | Routes FastAPI via `TestClient` httpx : status codes, schémas, métriques |
 
 **`tests/conftest.py`** : fixture autouse qui chdir vers `nba-api/` (le code utilise des chemins relatifs `static/model/classifier.pikl`) + injecte `nba-api/` dans `sys.path`.
@@ -790,55 +844,41 @@ kind load image-archive /tmp/nba-backend.tar --name nba-predictor
 pytest --cov=nba-api --cov-report=term-missing
 ```
 
-**xfail strict documenté** : `test_single_vector_uses_dataset_statistics` documente le bug `preprocess()` Min-Max (voir §9). Si quelqu'un "corrige" naïvement sans aussi mettre à jour le test, pytest fail (xfail strict = échec si le test devient unexpectedly passing).
+**Historique du test `test_single_vector_uses_dataset_statistics`** : il documentait le bug `preprocess()` en `xfail` strict (V3-V5). Depuis le fix V6 (§8.1), il passe au vert — il vérifie maintenant que le scaling est cohérent quel que soit le `GP`. Suite complète : **33 passed, 0 xfail**.
 
 ---
 
-## 10. Bugs connus et dette technique
+## 11. Bugs connus et dette technique
 
-### 9.1 `preprocess()` Min-Max global cassé sur vecteur unique
+### 11.1 ~~`preprocess()` Min-Max global cassé~~ — RÉSOLU en V6
 
-**Localisation** : `nba-api/functions.py:77-88`
+**Statut : corrigé (Vague 6).** Avant V6, `preprocess()` (méthode statique) calculait min/max sur les 19 features du vecteur unique, écrasant les features de petite échelle derrière `GP` (50-82). Les prédictions de `/api/nba/predict` divergeaient de `/api/nba/info`.
 
-```python
-@staticmethod
-def preprocess(arr):
-    """Min-Max scaling sur les valeurs du tableau passé."""
-    minimum = arr.min()      # ← min/max sur le vecteur seul
-    maximum = arr.max()
-    denom = maximum - minimum if maximum != minimum else 1.0
-    return (arr - minimum) / denom
-```
+**Fix** : le pipeline d'entraînement (`training/train.py`) sérialise un `MinMaxScaler` fitté sur le dataset (`scaler.pikl`). `preprocess()` est devenu une méthode d'instance qui applique `self.scaler.transform(arr)` (scaling par-feature). Les deux routes donnent désormais des résultats identiques (validé 5/5). Détails → §8.1.
 
-**Symptôme** : sur la route `/api/nba/predict` (1 vecteur de 19 features), `min` et `max` sont calculés sur les 19 features du vecteur seul, **pas** sur les statistiques du dataset d'entraînement. Conséquence : la feature dominante (typiquement `GP`, valeurs 50-82) écrase les autres → prédictions biaisées.
+### 11.2 ~~Modèle ML sklearn 0.24.1 vs runtime 1.5.1~~ — RÉSOLU en V6
 
-**Test xfail strict** dans `tests/test_predictor.py::TestPreprocess::test_single_vector_uses_dataset_statistics`.
+**Statut : corrigé (Vague 6).** Le ré-entraînement produit un `classifier.pikl` sérialisé en sklearn 1.5.1, donc plus d'`InconsistentVersionWarning`. L'ancien modèle est archivé en `classifier.legacy-0.24.1.pikl` (rollback). Le filtre `filterwarnings` dans `pyproject.toml` peut être retiré (laissé par sécurité tant que l'ancien pickle traîne en backup).
 
-**Fix prévu en Vague 6** avec un `MinMaxScaler` sklearn pré-entraîné sur le dataset, sérialisé via MLflow, chargé au démarrage de l'API. Pas avant car ré-entraîner le modèle sans le pipeline MLflow casserait les prédictions sans pouvoir les régénérer.
-
-### 9.2 Modèle ML sklearn 0.24.1 vs runtime 1.5.1
-
-`InconsistentVersionWarning` émis par sklearn lors du chargement du pickle. Toléré (silencé dans `pyproject.toml`) car les prédictions restent stables. Sera résolu en V6 (ré-entraînement avec sklearn current).
-
-### 9.3 CVE OS distroless impatchables
+### 11.3 CVE OS distroless impatchables
 
 Voir `.trivyignore` (§6.4). 4 CVE HIGH dans `libpython3.11`, `glibc` : on attend que Google rebuild l'image distroless. Audit `Revisit by: 2026-07-01`.
 
-### 9.4 Password admin UI Airflow en clair
+### 11.4 Password admin UI Airflow en clair
 
 Le chart Airflow Helm ne supporte pas un Secret pour `webserver.defaultUser.password`. Le password (`admin/admin`) reste en clair dans `airflow-values.yaml`. Le SealedSecret `airflow-admin-secret` existe en prévision (clé prête), mais la consommation demande de customiser `createUserJob.command` — V4.1bis.
 
-### 9.5 Egress NetworkPolicies non filtré
+### 11.5 Egress NetworkPolicies non filtré
 
 Voir §6.3. V4.3 ne filtre que l'ingress. V4.3bis pour filtrer l'egress (cibler DNS kube-system + services autorisés).
 
-### 9.6 Logs Airflow en `emptyDir` (perdus au restart)
+### 11.6 Logs Airflow en `emptyDir` (perdus au restart)
 
 Le chart Airflow demande un PVC ReadWriteMany pour les logs (4 pods qui écrivent). Le provisioner local de kind (`rancher.io/local-path`) ne supporte que ReadWriteOnce → PVC reste `Pending`. On a désactivé `logs.persistence.enabled` (`airflow-values.yaml`), les logs sont en `emptyDir` (perdus au restart du pod). Acceptable pour démo local. Prod : NFS/Longhorn/CSI cloud (EFS/Azure Files/Filestore).
 
 ---
 
-## 11. Décisions architecturales (mini-ADR)
+## 12. Décisions architecturales (mini-ADR)
 
 ### ADR-1 : kind plutôt que Minikube
 
@@ -1000,6 +1040,23 @@ Calibration : `requests: 100m` calibré après mesure (idle ~3m), threshold 70% 
 **Justification** : le chart kube-prometheus-stack embarque déjà le sidecar `grafana-sc-dashboard` qui scanne tous les namespaces. Pas de config Grafana à toucher, pas de volume à monter : on commit un JSON, on en fait un ConfigMap labellé, et le dashboard apparaît. GitOps-friendly, zéro clic manuel, fonctionne en CI.
 
 **Receiver webhook de démo** : pour l'alerting, on route vers un pod echo plutôt qu'un vrai Slack/email afin de démontrer la chaîne complète sans secret externe ni compte tiers. En prod, on remplacerait le `webhookConfigs` par `slackConfigs`/`emailConfigs`/`pagerdutyConfigs` (avec les secrets en SealedSecret, cf. §6.2).
+
+---
+
+### ADR-12 : Ré-entraîner + scaler sérialisé plutôt que patcher preprocess() ou garder le modèle legacy (V6)
+
+**Contexte** : corriger le bug `preprocess()` (Min-Max global sur vecteur unique) sans casser les prédictions.
+
+**Options** :
+- Patcher `preprocess()` pour re-fitter un `MinMaxScaler` sur le dataset à chaque requête (ce que faisait `predict_by_name`) — correct mais coûteux et garde le modèle sklearn 0.24.1 non reproductible
+- Garder `classifier.pikl` (0.24.1) + ajouter seulement un `scaler.pikl` fitté à part — moins risqué mais conserve l'`InconsistentVersionWarning` et un modèle « boîte noire »
+- **Ré-entraîner proprement** (sklearn 1.5.1) avec split train/test reproductible, sérialiser `classifier.pikl` + `scaler.pikl`, charger les deux au démarrage
+
+**Décision** : **ré-entraîner + scaler sérialisé** (V6), avec l'ancien modèle archivé en `classifier.legacy-0.24.1.pikl`.
+
+**Justification** : c'est le vrai geste « Data Engineer ». On obtient un pipeline reproductible (`training/train.py`, `random_state=42`), des métriques honnêtes (évaluées sur test set), un tracking MLflow, et on élimine d'un coup deux dettes (bug preprocess + warning version). Le backup legacy permet un rollback si une régression était détectée.
+
+**Invariant à préserver** : `FEATURE_ORDER` dans `train.py` == ordre de `build_params()` dans `functions.py` (19 features finissant par `TOV`). C'est le contrat implicite entre le modèle et l'API.
 
 ---
 

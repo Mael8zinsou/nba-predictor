@@ -13,7 +13,7 @@ Projet d'industrialisation d'une application ML de classification de joueurs NBA
 
 L'objectif n'est pas le modèle ML (régression logistique simple, déjà entraînée et sérialisée dans `classifier.pikl`), mais le **pipeline d'industrialisation** : conteneurisation, orchestration Kubernetes, automatisation Airflow, observabilité Prometheus/Grafana, sécurité réseau.
 
-**État au 2026-05-20** : Vagues 1 à 5 terminées (cluster + sécurité + secrets + NP + HPA + Ingress + PDB + dashboard Grafana versionné + alerting PrometheusRule/Alertmanager). V5bis (Loki + OTel) optionnelle, V6 (Data Engineering MLflow), V7 (présentation portfolio) restantes.
+**État au 2026-05-20** : Vagues 1 à 6 (cœur) terminées (cluster + sécurité + secrets + NP + HPA + Ingress + PDB + observabilité + pipeline d'entraînement reproductible MLflow + fix `preprocess()`). Reste : déploiement serveur MLflow dans le cluster (V6 in-progress), V7 (présentation portfolio).
 
 Pour tous les détails techniques (architecture, stack, conventions, ADR, bugs connus) → **[docs/doc.md](docs/doc.md)**.
 
@@ -40,8 +40,8 @@ Pour tous les détails techniques (architecture, stack, conventions, ADR, bugs c
 
 ## Ce que je ne dois PAS faire sans confirmation
 
-- **Toucher au modèle `classifier.pikl` ou au dataset `nba_logreg.csv`** hors du contexte Vague 6 (pipeline d'entraînement MLflow).
-- **"Corriger" `preprocess()` au passage** : le fix doit venir avec son scaler sérialisé en V6, sinon on casse les prédictions sans pouvoir re-générer le modèle. Le xfail strict du test `test_single_vector_uses_dataset_statistics` est le rappel.
+- **Régénérer `classifier.pikl` / `scaler.pikl` sans relancer `training/train.py`** : ces deux artefacts sont produits ensemble par le pipeline reproductible (V6). Ne jamais en éditer un seul à la main. L'ancien modèle est archivé en `classifier.legacy-0.24.1.pikl` (rollback).
+- **Désynchroniser `FEATURE_ORDER` (training/train.py) de `build_params()` (functions.py)** : c'est l'invariant critique du projet — le modèle et l'API doivent partager l'ordre exact des 19 features (finissant par TOV). Une désync casse silencieusement les prédictions.
 - **Modifier `.trivyignore` sans ajouter de date `Revisit by:`** — chaque ignore doit avoir une échéance d'audit pour éviter d'accumuler de la dette CVE silencieuse.
 - **Supprimer les `__pycache__/` ou autres caches versionnés** sans vérifier d'abord ce qui est effectivement utile.
 - **Mettre à jour la documentation utilisateur sans synchroniser les 3 fichiers** : `README.md` (vitrine), `docs/doc.md` (référence technique), `docs/key_commands.md` (cookbook). Si un changement impacte les conventions ou décisions, mettre à jour `docs/doc.md` en priorité.

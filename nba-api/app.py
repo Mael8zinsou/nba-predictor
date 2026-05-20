@@ -107,7 +107,7 @@ def predict(
             GP, MIN, PTS, FGM, FGA, FGP, PM, PA, PAP,
             FTM, FTA, FTP, OREB, DREB, REB, AST, STL, BLK, TOV,
         )  # fmt: skip
-        vect = NBAPredictor.preprocess(arr)
+        vect = predictor.preprocess(arr)
         pred = predictor.predict_vector(vect)
         return {"prediction": pred}
     except Exception:

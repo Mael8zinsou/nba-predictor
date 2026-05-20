@@ -73,47 +73,25 @@ class TestBuildParams:
 
 
 class TestPreprocess:
-    def test_output_range_0_1_on_typical_input(self) -> None:
-        """L'output est dans [0, 1] pour une entrée standard."""
-        from functions import NBAPredictor
+    """preprocess() applique désormais le MinMaxScaler entraîné (Vague 6).
 
-        arr = np.array([[10.0, 20.0, 30.0]])
-        out = NBAPredictor.preprocess(arr)
-        assert out.min() >= 0.0
-        assert out.max() <= 1.0
+    C'est une méthode d'instance (utilise self.scaler chargé au __init__),
+    plus une méthode statique. Le scaling est par-feature, fitté sur le
+    dataset d'entraînement.
+    """
 
-    def test_constant_input_returns_zeros(self) -> None:
-        """Si toutes les valeurs sont identiques (min == max), on évite la div par zéro."""
-        from functions import NBAPredictor
+    def test_single_vector_uses_dataset_statistics(self, predictor: "NBAPredictor") -> None:
+        """FIX V6 : le scaling utilise les stats du dataset (scaler), pas du vecteur.
 
-        arr = np.array([[5.0, 5.0, 5.0]])
-        out = NBAPredictor.preprocess(arr)
-        # (5-5)/1.0 = 0 partout : pas de NaN, pas d'inf
-        assert not np.any(np.isnan(out))
-        assert not np.any(np.isinf(out))
-        np.testing.assert_array_equal(out, np.zeros_like(arr))
-
-    @pytest.mark.xfail(
-        reason=(
-            "BUG CONNU : preprocess() calcule min/max sur le vecteur seul (1 ligne x 19 features) "
-            "au lieu d'utiliser les statistiques du dataset d'entraînement. Conséquence : "
-            "la feature dominante (typiquement GP, 50-82) écrase les autres. "
-            "Fix prévu en Vague 6 avec un MinMaxScaler entraîné et sérialisé via MLflow. "
-            "Voir memory/project_known_bugs.md."
-        ),
-        strict=True,
-    )
-    def test_single_vector_uses_dataset_statistics(self) -> None:
-        """Le scaling d'un vecteur unique devrait utiliser les min/max du dataset, pas du vecteur.
-
-        Test rouge volontaire : documente le bug. Quand il sera fixé en V6, ce test
-        passera et `strict=True` fera échouer le run (signal pour mettre à jour ce test).
+        Ce test documentait un bug en xfail strict avant V6. Maintenant que
+        preprocess() applique le scaler pré-entraîné, la feature MIN (index 1)
+        est normalisée de façon identique quel que soit le GP du joueur :
+        elle ne dépend que de la valeur MIN elle-même et des stats dataset.
         """
         from functions import NBAPredictor
 
-        # On simule deux joueurs avec des stats très différentes (l'un avec GP=82,
-        # l'autre avec GP=10). Si preprocess() utilisait les stats du dataset,
-        # les valeurs normalisées seraient cohérentes entre les deux appels.
+        # Deux joueurs identiques sauf GP (82 vs 10). Avec un scaler par-feature,
+        # la colonne MIN (=28 pour les deux) doit donner la même valeur normalisée.
         player_a = NBAPredictor.build_params(
             GP=82, MIN=28, PTS=14, FGM=5, FGA=11, FGP=0.45, PM=2, PA=5, PAP=0.40,
             FTM=2, FTA=3, FTP=0.67, OREB=1, DREB=4, REB=5, AST=4, STL=1, BLK=0.5, TOV=2,
@@ -122,12 +100,27 @@ class TestPreprocess:
             GP=10, MIN=28, PTS=14, FGM=5, FGA=11, FGP=0.45, PM=2, PA=5, PAP=0.40,
             FTM=2, FTA=3, FTP=0.67, OREB=1, DREB=4, REB=5, AST=4, STL=1, BLK=0.5, TOV=2,
         )  # fmt: skip
-        out_a = NBAPredictor.preprocess(player_a)
-        out_b = NBAPredictor.preprocess(player_b)
-        # La feature MIN (index 1) devrait être identique entre A et B (même valeur 28)
-        # si on scalait sur les stats du dataset. Avec le bug actuel, elle est
-        # différente parce que les min/max varient selon le GP du joueur.
+        out_a = predictor.preprocess(player_a)
+        out_b = predictor.preprocess(player_b)
+        # MIN identique (28) -> même valeur normalisée, indépendamment du GP.
         assert out_a[0, 1] == pytest.approx(out_b[0, 1])
+
+    def test_preserves_shape(self, predictor: "NBAPredictor") -> None:
+        """Le scaler conserve la forme (n_samples, 19)."""
+        from functions import NBAPredictor
+
+        arr = NBAPredictor.build_params(*([5.0] * 19))
+        out = predictor.preprocess(arr)
+        assert out.shape == (1, 19)
+
+    def test_no_nan_no_inf(self, predictor: "NBAPredictor") -> None:
+        """Pas de NaN ni d'inf en sortie, même sur des valeurs extrêmes."""
+        from functions import NBAPredictor
+
+        arr = NBAPredictor.build_params(*([0.0] * 19))
+        out = predictor.preprocess(arr)
+        assert not np.any(np.isnan(out))
+        assert not np.any(np.isinf(out))
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +134,7 @@ class TestPredictVector:
         from functions import NBAPredictor
 
         arr = NBAPredictor.build_params(*([1.0] * 19))
-        vect = NBAPredictor.preprocess(arr)
+        vect = predictor.preprocess(arr)
         result = predictor.predict_vector(vect)
         assert "decision" in result
 
@@ -150,7 +143,7 @@ class TestPredictVector:
         from functions import NBAPredictor
 
         arr = NBAPredictor.build_params(*([1.0] * 19))
-        vect = NBAPredictor.preprocess(arr)
+        vect = predictor.preprocess(arr)
         result = predictor.predict_vector(vect)
         assert isinstance(result["decision"], list)
         assert len(result["decision"]) == 1
