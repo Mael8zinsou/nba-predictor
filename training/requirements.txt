@@ -1,7 +1,7 @@
 # Dependances du pipeline d'entrainement (Vague 6).
 # Separe du backend (nba-api/requirements.txt) : l'entrainement n'a pas besoin
 # de FastAPI/uvicorn, et le backend n'a pas besoin de MLflow.
-mlflow==2.17.2
+mlflow==2.22.5
 scikit-learn==1.5.1
-pandas==2.2.2
+pandas==2.3.3
 numpy==1.26.4
