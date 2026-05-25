@@ -1,14 +1,14 @@
 # Bumps V4.2 (CVE fixes pour Trivy --exit-code 1) :
 #   - fastapi 0.115.0 -> 0.115.6 : pull starlette 0.41.3 (fix CVE-2024-47874)
 #   - python-multipart 0.0.9 -> 0.0.27 : fix CVE-2024-53981, CVE-2026-24486, CVE-2026-42561
-fastapi==0.115.6
-uvicorn==0.30.1
+fastapi==0.136.3
+uvicorn==0.48.0
 
 numpy==1.26.4
-pandas==2.2.2
+pandas==2.3.3
 scikit-learn==1.5.1
-joblib==1.4.2
+joblib==1.5.3
 
-pydantic==2.7.4
-python-multipart==0.0.27
+pydantic==2.13.4
+python-multipart==0.0.29
 prometheus-client
